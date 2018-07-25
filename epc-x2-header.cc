@@ -876,6 +876,12 @@ EpcX2SnStatusTransferHeader::Deserialize (Buffer::Iterator start)
   m_numberOfIes = 3;
   m_headerLength = 6 + sz * (14 + (EpcX2Sap::m_maxPdcpSn / 64));
 
+
+  //
+  /**Masri**
+   * This part of code it seems to be wrong, because it dose not write the value of receiveStatusOfUlPdcpSdus
+   * and it dose not initialize it anywhere.
+   */
   for (int j = 0; j < sz; j++)
     {
       EpcX2Sap::ErabsSubjectToStatusTransferItem ErabItem;
@@ -1310,183 +1316,366 @@ EpcX2LoadInformationHeader::GetNumberOfIes () const
   return m_numberOfIes;
 }
 
-////////////////
 
-NS_OBJECT_ENSURE_REGISTERED (EpcX2ResourceStatusUpdateHeader);
 
-EpcX2ResourceStatusUpdateHeader::EpcX2ResourceStatusUpdateHeader ()
-  : m_numberOfIes (3),
-    m_headerLength (6),
-    m_enb1MeasurementId (0xfffa),
-    m_enb2MeasurementId (0xfffa)
+//A.M
+///////////////////////////////////////////////
+NS_OBJECT_ENSURE_REGISTERED (EpcX2FailureDetectionTokenHeader);
+
+EpcX2FailureDetectionTokenHeader::EpcX2FailureDetectionTokenHeader ()
+  : m_numberOfIes 	(5),
+    m_headerLength 	(2+2+(2)+2+(2+2)+1+2), // this is not exactly the right header size
+	m_sourceId 		(0),
+	m_forwarded 	(0),
+	m_forwardingId 	(9999)
 {
-  m_cellMeasurementResultList.clear ();
+
 }
 
-EpcX2ResourceStatusUpdateHeader::~EpcX2ResourceStatusUpdateHeader ()
+EpcX2FailureDetectionTokenHeader::~EpcX2FailureDetectionTokenHeader ()
 {
-  m_numberOfIes = 0;
-  m_headerLength = 0;
-  m_enb1MeasurementId = 0xfffb;
-  m_enb2MeasurementId = 0xfffb;
-  m_cellMeasurementResultList.clear ();
+  m_numberOfIes 	= 0;
+  m_headerLength 	= 0;
+  m_sourceId 		= 0;
+  m_forwarded 		= 0;
+  m_forwardingId 	= 9999;
+
 }
 
 TypeId
-EpcX2ResourceStatusUpdateHeader::GetTypeId (void)
+EpcX2FailureDetectionTokenHeader::GetTypeId (void)
 {
-  static TypeId tid = TypeId ("ns3::EpcX2ResourceStatusUpdateHeader")
+  static TypeId tid = TypeId ("ns3::EpcX2FailureDetectionTokenHeader")
     .SetParent<Header> ()
     .SetGroupName("Lte")
-    .AddConstructor<EpcX2ResourceStatusUpdateHeader> ()
+    .AddConstructor<EpcX2FailureDetectionTokenHeader> ()
   ;
   return tid;
 }
 
 TypeId
-EpcX2ResourceStatusUpdateHeader::GetInstanceTypeId (void) const
+EpcX2FailureDetectionTokenHeader::GetInstanceTypeId (void) const
 {
   return GetTypeId ();
 }
 
 uint32_t
-EpcX2ResourceStatusUpdateHeader::GetSerializedSize (void) const
+EpcX2FailureDetectionTokenHeader::GetSerializedSize (void) const
 {
   return m_headerLength;
 }
 
 void
-EpcX2ResourceStatusUpdateHeader::Serialize (Buffer::Iterator start) const
+EpcX2FailureDetectionTokenHeader::Serialize (Buffer::Iterator start) const
 {
-  Buffer::Iterator i = start;
+	Buffer::Iterator i = start;
+	  //(2+2+(2*sz)+2+(2+2)*sz2+1+2)
+	i.WriteHtonU16 (m_sourceId);  // 2
 
-  i.WriteHtonU16 (m_enb1MeasurementId);
-  i.WriteHtonU16 (m_enb2MeasurementId);
+	std::vector<uint16_t>::size_type sz = m_targetIds.size();
 
-  std::vector <EpcX2Sap::CellMeasurementResultItem>::size_type sz = m_cellMeasurementResultList.size ();
-  i.WriteHtonU16 (sz);              // number of CellMeasurementResultItem
+	i.WriteHtonU16(sz); //2
 
-  for (int j = 0; j < (int) sz; j++)
-    {
-      EpcX2Sap::CellMeasurementResultItem item = m_cellMeasurementResultList [j];
+	for (int j = 0; j < (int) sz; j++)
+	{
+		i.WriteHtonU16(m_targetIds[j]);  // 2*sz
+	}
 
-      i.WriteHtonU16 (item.sourceCellId);
-      i.WriteU8 (item.dlHardwareLoadIndicator);
-      i.WriteU8 (item.ulHardwareLoadIndicator);
-      i.WriteU8 (item.dlS1TnlLoadIndicator);
-      i.WriteU8 (item.ulS1TnlLoadIndicator);
+	std::map<uint16_t, uint16_t>::size_type sz2 = m_forwardingList.size();
 
-      i.WriteHtonU16 (item.dlGbrPrbUsage);
-      i.WriteHtonU16 (item.ulGbrPrbUsage);
-      i.WriteHtonU16 (item.dlNonGbrPrbUsage);
-      i.WriteHtonU16 (item.ulNonGbrPrbUsage);
-      i.WriteHtonU16 (item.dlTotalPrbUsage);
-      i.WriteHtonU16 (item.ulTotalPrbUsage);
+	i.WriteHtonU16(sz2); // 2
 
-      i.WriteHtonU16 (item.dlCompositeAvailableCapacity.cellCapacityClassValue);
-      i.WriteHtonU16 (item.dlCompositeAvailableCapacity.capacityValue);
-      i.WriteHtonU16 (item.ulCompositeAvailableCapacity.cellCapacityClassValue);
-      i.WriteHtonU16 (item.ulCompositeAvailableCapacity.capacityValue);
-    }
+	for (std::map <uint16_t, uint16_t >::const_iterator  it = m_forwardingList.begin ();
+	   it != m_forwardingList.end ();
+	   ++it)
+	{
+	  i.WriteHtonU16(it->first);  	// 2
+	  i.WriteHtonU16(it->second); 	// 2
+	}
+
+
+  	i.WriteU8(m_forwarded); 			// 1
+  	i.WriteHtonU16(m_forwardingId); 	// 2
+
 }
 
 uint32_t
-EpcX2ResourceStatusUpdateHeader::Deserialize (Buffer::Iterator start)
+EpcX2FailureDetectionTokenHeader::Deserialize (Buffer::Iterator start)
 {
   Buffer::Iterator i = start;
+  //(2+2+2+(2+4+1))
+  m_sourceId 	= i.ReadNtohU16 ();  		// 2
+  int sz  		= i.ReadNtohU16 (); 		// 2
+  for (int j = 0; j < (int) sz; j++)
+  	{
+	   m_targetIds.push_back(i.ReadNtohU16());  	// 2*sz
+	}
+  int sz2  		= i.ReadNtohU16 ();  		// 2
 
-  m_enb1MeasurementId = i.ReadNtohU16 ();
-  m_enb2MeasurementId = i.ReadNtohU16 ();
+  uint16_t tmp1 = 0;
+  uint16_t tmp2 = 0;
+  for (int j = 0; j < (int) sz2; j++)
+  	{
+	  tmp1 = i.ReadNtohU16 ();
+	  tmp2 = i.ReadNtohU16 ();
 
-  int sz = i.ReadNtohU16 ();
-  for (int j = 0; j < sz; j++)
-    {
-      EpcX2Sap::CellMeasurementResultItem item;
+	  m_forwardingList.insert(std::pair<uint16_t,uint16_t>(tmp1,tmp2));
+  	}
 
-      item.sourceCellId = i.ReadNtohU16 ();
-      item.dlHardwareLoadIndicator = (EpcX2Sap::LoadIndicator) i.ReadU8 ();
-      item.ulHardwareLoadIndicator = (EpcX2Sap::LoadIndicator) i.ReadU8 ();
-      item.dlS1TnlLoadIndicator = (EpcX2Sap::LoadIndicator) i.ReadU8 ();
-      item.ulS1TnlLoadIndicator = (EpcX2Sap::LoadIndicator) i.ReadU8 ();
+  m_forwarded 		= i.ReadU8();		 	// 1
+  m_forwardingId 	= i.ReadNtohU16 ();  	// 2
 
-      item.dlGbrPrbUsage = i.ReadNtohU16 ();
-      item.ulGbrPrbUsage = i.ReadNtohU16 ();
-      item.dlNonGbrPrbUsage = i.ReadNtohU16 ();
-      item.ulNonGbrPrbUsage = i.ReadNtohU16 ();
-      item.dlTotalPrbUsage = i.ReadNtohU16 ();
-      item.ulTotalPrbUsage = i.ReadNtohU16 ();
 
-      item.dlCompositeAvailableCapacity.cellCapacityClassValue = i.ReadNtohU16 ();
-      item.dlCompositeAvailableCapacity.capacityValue = i.ReadNtohU16 ();
-      item.ulCompositeAvailableCapacity.cellCapacityClassValue = i.ReadNtohU16 ();
-      item.ulCompositeAvailableCapacity.capacityValue = i.ReadNtohU16 ();
-
-      m_cellMeasurementResultList.push_back (item);
-    }
-
-  m_headerLength = 6 + sz * 26;
-  m_numberOfIes = 3;
+  m_headerLength = 4+ 2 * sz + 2 + 4*sz2 + 1 + 2 ;
+  m_numberOfIes = 5;
 
   return GetSerializedSize ();
 }
 
 void
-EpcX2ResourceStatusUpdateHeader::Print (std::ostream &os) const
+EpcX2FailureDetectionTokenHeader::Print (std::ostream &os) const
 {
-  os << "Enb1MeasurementId = " << m_enb1MeasurementId
-     << " Enb2MeasurementId = " << m_enb2MeasurementId
-     << " NumOfCellMeasurementResultItems = " << m_cellMeasurementResultList.size ();
+  os << "Source Id = " << m_sourceId;
 }
 
-uint16_t
-EpcX2ResourceStatusUpdateHeader::GetEnb1MeasurementId () const
+uint16_t EpcX2FailureDetectionTokenHeader::GetSourceId() const
 {
-  return m_enb1MeasurementId;
+	return m_sourceId;
+}
+void EpcX2FailureDetectionTokenHeader::SetSourceId (uint16_t sourceId)
+{
+	m_sourceId = sourceId;
 }
 
-void
-EpcX2ResourceStatusUpdateHeader::SetEnb1MeasurementId (uint16_t enb1MeasurementId)
+std::vector<uint16_t> EpcX2FailureDetectionTokenHeader::GetTargetIds() const
 {
-  m_enb1MeasurementId = enb1MeasurementId;
+	return m_targetIds;
+}
+void EpcX2FailureDetectionTokenHeader::SetTargetIds (std::vector<uint16_t> targetIds)
+{
+	m_targetIds = targetIds;
 }
 
-uint16_t
-EpcX2ResourceStatusUpdateHeader::GetEnb2MeasurementId () const
+std::map<uint16_t,uint16_t> EpcX2FailureDetectionTokenHeader::GetForwardingList() const
 {
-  return m_enb2MeasurementId;
+	return m_forwardingList;
+}
+void EpcX2FailureDetectionTokenHeader::SetForwardingList (std::map<uint16_t,uint16_t> forwardingList)
+{
+	m_forwardingList = forwardingList;
 }
 
-void
-EpcX2ResourceStatusUpdateHeader::SetEnb2MeasurementId (uint16_t enb2MeasurementId)
+uint8_t EpcX2FailureDetectionTokenHeader::GetForwarded() const
 {
-  m_enb2MeasurementId = enb2MeasurementId;
+	return m_forwarded;
+}
+void EpcX2FailureDetectionTokenHeader::SetForwarded (uint8_t forwarded)
+{
+	m_forwarded = forwarded;
 }
 
-std::vector <EpcX2Sap::CellMeasurementResultItem>
-EpcX2ResourceStatusUpdateHeader::GetCellMeasurementResultList () const
+uint16_t EpcX2FailureDetectionTokenHeader::GetForwardingId() const
 {
-  return m_cellMeasurementResultList;
+	return m_forwardingId;
+}
+void EpcX2FailureDetectionTokenHeader::SetForwardingId (uint16_t forwardingId)
+{
+	m_forwardingId = forwardingId;
 }
 
-void
-EpcX2ResourceStatusUpdateHeader::SetCellMeasurementResultList (std::vector <EpcX2Sap::CellMeasurementResultItem> cellMeasurementResultList)
+bool EpcX2FailureDetectionTokenHeader::checkTargetExists(uint16_t targetId)
 {
-  m_cellMeasurementResultList = cellMeasurementResultList;
-
-  std::vector <EpcX2Sap::CellMeasurementResultItem>::size_type sz = m_cellMeasurementResultList.size ();
-  m_headerLength += sz * 26;
+	for (int j = 0; j < (int)m_targetIds.size(); j++)
+	{
+		if(m_targetIds[j] == targetId)
+			return true;
+	}
+	return false;
 }
 
 uint32_t
-EpcX2ResourceStatusUpdateHeader::GetLengthOfIes () const
+EpcX2FailureDetectionTokenHeader::GetLengthOfIes ()
+{
+	std::vector<uint16_t>::size_type sz = m_targetIds.size();
+	std::map<uint16_t, uint16_t>::size_type sz2 = m_forwardingList.size();
+	m_headerLength = 4+ 2 * sz + 2 + 4*sz2 + 1 + 2;
+  return m_headerLength;
+}
+
+uint32_t
+EpcX2FailureDetectionTokenHeader::GetNumberOfIes () const
+{
+  return m_numberOfIes;
+}
+
+//A.M
+///////////////////////////////////////////////
+NS_OBJECT_ENSURE_REGISTERED (EpcX2TokenAckNACKHeader);
+
+EpcX2TokenAckNACKHeader::EpcX2TokenAckNACKHeader () // initialization must be in the same order as they are defined in the class
+  : m_numberOfIes 	(5),
+    m_headerLength 	(2+2+2+1+1),
+    m_forwardingId	(0),
+    m_sourceId		(0),
+    m_tokenOwnerId 	(0),
+    m_successStatus (0),
+    m_noX2ToForward	(0)
+	//m_singleNode	(0)
+{
+
+}
+
+EpcX2TokenAckNACKHeader::~EpcX2TokenAckNACKHeader ()
+{
+  m_numberOfIes 	= 0;
+  m_headerLength 	= 0;
+  m_forwardingId	= 0;
+  m_sourceId		= 0;
+  m_tokenOwnerId 	= 0;
+  m_successStatus 	= 0;
+  m_noX2ToForward	= 0;
+//  m_singleNode		= 0;
+
+}
+
+TypeId
+EpcX2TokenAckNACKHeader::GetTypeId (void)
+{
+  static TypeId tid = TypeId ("ns3::EpcX2TokenAckNACKHeader")
+    .SetParent<Header> ()
+    .SetGroupName("Lte")
+    .AddConstructor<EpcX2TokenAckNACKHeader> ()
+  ;
+  return tid;
+}
+
+TypeId
+EpcX2TokenAckNACKHeader::GetInstanceTypeId (void) const
+{
+  return GetTypeId ();
+}
+
+uint32_t
+EpcX2TokenAckNACKHeader::GetSerializedSize (void) const
+{
+  return m_headerLength;
+}
+
+void
+EpcX2TokenAckNACKHeader::Serialize (Buffer::Iterator start) const
+{
+	Buffer::Iterator i = start;
+	  //(2+2+2+1+1+1)
+	i.WriteHtonU16 (m_forwardingId);  	// 2
+	i.WriteHtonU16 (m_sourceId);  		// 2
+	i.WriteHtonU16 (m_tokenOwnerId); 	// 2
+
+  	i.WriteU8(m_successStatus); 		// 1
+  	i.WriteU8(m_noX2ToForward); 		// 1
+  	//i.WriteU8(m_singleNode); 			// 1
+
+}
+
+uint32_t
+EpcX2TokenAckNACKHeader::Deserialize (Buffer::Iterator start)
+{
+  Buffer::Iterator i = start;
+  //(2+2+2+(2+4+1))
+  m_forwardingId 	= i.ReadNtohU16 ();  	// 2
+  m_sourceId 		= i.ReadNtohU16 ();  	// 2
+  m_tokenOwnerId 	= i.ReadNtohU16 ();  	// 2
+  m_successStatus 	= i.ReadU8();		 	// 1
+  m_noX2ToForward 	= i.ReadU8();		 	// 1
+  //m_singleNode		= i.ReadU8();		 	// 1
+
+  m_headerLength 	= 2+2+2+1+1 ;
+  m_numberOfIes 	= 5;
+
+  return GetSerializedSize ();
+}
+
+void
+EpcX2TokenAckNACKHeader::Print (std::ostream &os) const
+{
+  os << "Forwarding Id = " << m_forwardingId;
+}
+
+uint16_t
+EpcX2TokenAckNACKHeader::GetforwardingId () const
+{
+	return m_forwardingId;
+}
+void
+EpcX2TokenAckNACKHeader::SetforwardingId (uint16_t forwardingId )
+{
+	m_forwardingId = forwardingId;
+}
+
+uint16_t
+EpcX2TokenAckNACKHeader::GetSourceId() const
+{
+	return m_sourceId;
+}
+void
+EpcX2TokenAckNACKHeader::SetSourceId (uint16_t sourceId)
+{
+	m_sourceId = sourceId;
+}
+
+uint16_t
+EpcX2TokenAckNACKHeader::GetTargetId() const
+{
+	return m_tokenOwnerId;
+}
+void
+EpcX2TokenAckNACKHeader::SetTargetId (uint16_t targetId)
+{
+	m_tokenOwnerId = targetId;
+}
+
+void
+EpcX2TokenAckNACKHeader::SetACKNACK(uint8_t success)
+{
+	m_successStatus = success;
+}
+uint8_t
+EpcX2TokenAckNACKHeader::GetACKNACK()
+{
+	return m_successStatus;
+}
+void
+EpcX2TokenAckNACKHeader::SetNoX2ToForward(uint8_t noX2)
+{
+	m_noX2ToForward = noX2;
+}
+uint8_t
+EpcX2TokenAckNACKHeader::GetNoX2ToForward()
+{
+	return m_noX2ToForward;
+}
+/*void
+EpcX2TokenAckNACKHeader::SetSingleNode(uint8_t singleNode)
+{
+	m_singleNode = singleNode;
+}
+uint8_t
+EpcX2TokenAckNACKHeader::GetSingleNode()
+{
+	return m_singleNode;
+}
+*/
+uint32_t
+EpcX2TokenAckNACKHeader::GetLengthOfIes () const
 {
   return m_headerLength;
 }
 
 uint32_t
-EpcX2ResourceStatusUpdateHeader::GetNumberOfIes () const
+EpcX2TokenAckNACKHeader::GetNumberOfIes () const
 {
   return m_numberOfIes;
 }
+
+
 
 } // namespace ns3

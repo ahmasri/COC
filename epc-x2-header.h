@@ -25,7 +25,8 @@
 #include "ns3/header.h"
 
 #include <vector>
-
+#include <map>
+#include <set>
 
 namespace ns3 {
 
@@ -59,7 +60,12 @@ public:
     LoadIndication          = 2,
     SnStatusTransfer        = 4,
     UeContextRelease        = 5,
-    ResourceStatusReporting = 10
+	ResourceStatusReportingInitiation = 9,
+    ResourceStatusReporting = 10,
+	FailureDetectionInitiation = 11,
+	ForwardingFailureDetectionInitiation = 12,
+	TokenAckNACK = 13,
+
   };
 
   enum TypeOfMessage_t {
@@ -301,39 +307,98 @@ private:
 };
 
 
-class EpcX2ResourceStatusUpdateHeader : public Header
+
+
+class EpcX2FailureDetectionTokenHeader :public Header
 {
 public:
-  EpcX2ResourceStatusUpdateHeader ();
-  virtual ~EpcX2ResourceStatusUpdateHeader ();
+	EpcX2FailureDetectionTokenHeader ();
+	virtual ~EpcX2FailureDetectionTokenHeader ();
 
-  static TypeId GetTypeId (void);
-  virtual TypeId GetInstanceTypeId (void) const;
-  virtual uint32_t GetSerializedSize (void) const;
-  virtual void Serialize (Buffer::Iterator start) const;
-  virtual uint32_t Deserialize (Buffer::Iterator start);
-  virtual void Print (std::ostream &os) const;
+	static TypeId GetTypeId (void);
+	virtual TypeId GetInstanceTypeId (void) const;
+	virtual uint32_t GetSerializedSize (void) const;
+	virtual void Serialize (Buffer::Iterator start) const;
+	virtual uint32_t Deserialize (Buffer::Iterator start);
+	virtual void Print (std::ostream &os) const;
+
+	uint16_t GetSourceId() const;
+	void SetSourceId (uint16_t sourceId);
+
+	std::vector<uint16_t> GetTargetIds() const;
+	void SetTargetIds (std::vector<uint16_t> targetIds);
+
+	std::map<uint16_t,uint16_t> GetForwardingList() const;
+	void SetForwardingList (std::map<uint16_t,uint16_t> forwardingList);
+
+	uint8_t GetForwarded() const;
+	void SetForwarded (uint8_t forwarded);
+
+	uint16_t GetForwardingId() const;
+	void SetForwardingId (uint16_t forwardingId);
+
+	bool checkTargetExists(uint16_t targetId);
 
 
-  uint16_t GetEnb1MeasurementId () const;
-  void SetEnb1MeasurementId (uint16_t enb1MeasurementId);
-
-  uint16_t GetEnb2MeasurementId () const;
-  void SetEnb2MeasurementId (uint16_t enb2MeasurementId);
-
-  std::vector <EpcX2Sap::CellMeasurementResultItem> GetCellMeasurementResultList () const;
-  void SetCellMeasurementResultList (std::vector <EpcX2Sap::CellMeasurementResultItem> cellMeasurementResultList);
-
-  uint32_t GetLengthOfIes () const;
-  uint32_t GetNumberOfIes () const;
+	uint32_t GetLengthOfIes () ;
+	uint32_t GetNumberOfIes () const;
 
 private:
-  uint32_t          m_numberOfIes;
-  uint32_t          m_headerLength;
+	 uint32_t          				m_numberOfIes;
+	 uint32_t         				m_headerLength;
 
-  uint16_t          m_enb1MeasurementId;
-  uint16_t          m_enb2MeasurementId;
-  std::vector <EpcX2Sap::CellMeasurementResultItem> m_cellMeasurementResultList;
+	 uint16_t 						m_sourceId; 		// original Token owner
+	 std::vector <uint16_t> 		m_targetIds;
+	 std::map <uint16_t, uint16_t> 	m_forwardingList;
+	 uint8_t 						m_forwarded;    	// initialized as false = 0
+	 uint16_t 						m_forwardingId; 	// initialized to 9999 as null
+
+};
+
+class EpcX2TokenAckNACKHeader :public Header
+{
+public:
+	EpcX2TokenAckNACKHeader ();
+	virtual ~EpcX2TokenAckNACKHeader ();
+
+	static 	TypeId 		GetTypeId (void);
+	virtual TypeId 		GetInstanceTypeId (void) const;
+	virtual uint32_t 	GetSerializedSize (void) const;
+	virtual void 		Serialize (Buffer::Iterator start) const;
+	virtual uint32_t 	Deserialize (Buffer::Iterator start);
+	virtual void 		Print (std::ostream &os) const;
+
+	uint16_t GetforwardingId () const;
+	void SetforwardingId (uint16_t forwardingId);
+
+	uint16_t GetSourceId () const;
+	void SetSourceId (uint16_t sourceId);
+
+	uint16_t GetTargetId () const;
+	void SetTargetId (uint16_t targetId);
+
+	void SetACKNACK (uint8_t success);
+	uint8_t GetACKNACK ();
+
+	void SetNoX2ToForward (uint8_t noX2);
+	uint8_t GetNoX2ToForward ();
+
+	//void SetSingleNode (uint8_t noX2);
+	//uint8_t GetSingleNode ();
+
+	uint32_t GetLengthOfIes () const;
+	uint32_t GetNumberOfIes () const;
+
+private:
+	  uint32_t  m_numberOfIes;
+	  uint32_t  m_headerLength;
+
+	  uint16_t 	m_forwardingId;		 // Id of the forwarding cell from which I received the forwarded Token
+	  uint16_t 	m_sourceId; 		 // The ACK/NACK owner Id
+	  uint16_t 	m_tokenOwnerId; 	 // original Token owner
+	  uint8_t 	m_successStatus; 	 // True = 1 = ACK , False = NACK
+	  uint8_t	m_noX2ToForward; 	 // True = 1,  if sent back to tokenOwnerId without forwarding (no X2 to forward)
+	  //uint8_t	m_singleNode; 		 // this is true = 1 only of my list of forwarding is zero (no node to forward for so send ACK back directly)
 };
 
 
