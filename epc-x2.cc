@@ -88,6 +88,9 @@ EpcX2::EpcX2 ()
   NS_LOG_FUNCTION (this);
 
   m_x2SapProvider = new EpcX2SpecificEpcX2SapProvider<EpcX2> (this);
+  //Start the MLB check
+ //Simulator::Schedule (m_enbCheckMlbPeriod, &EpcX2::TriggerMlbCondition_1, this);
+// Simulator::Schedule (MilliSeconds(200), &EpcX2::TriggerMlbCondition_1, this);
 }
 
 EpcX2::~EpcX2 ()
@@ -108,9 +111,17 @@ EpcX2::DoDispose (void)
 TypeId
 EpcX2::GetTypeId (void)
 {
+	//A.M added new traces
   static TypeId tid = TypeId ("ns3::EpcX2")
     .SetParent<Object> ()
-    .SetGroupName("Lte");
+    .SetGroupName("Lte")
+  	.AddConstructor<EpcX2> ()
+    .AddTraceSource ("SendStatusRequest",
+    				"trace fired upon Entering SendResourceStatusRequest procedure",
+					MakeTraceSourceAccessor (&EpcX2::m_sendresourcestatusrequestTrace),
+					"ns3::EpcX2::SrcCidTargCidTracedCallback");
+
+
   return tid;
 }
 
@@ -164,7 +175,6 @@ EpcX2::AddX2Interface (uint16_t localCellId, Ipv4Address localX2Address, uint16_
                  "Mapping for data plane localSocket = " << localX2uSocket << " is already known");
   m_x2InterfaceCellIds [localX2uSocket] = Create<X2CellInfo> (localCellId, remoteCellId);
 }
-
 
 void 
 EpcX2::RecvFromX2cSocket (Ptr<Socket> socket)
@@ -336,30 +346,84 @@ EpcX2::RecvFromX2cSocket (Ptr<Socket> socket)
           m_x2SapUser->RecvUeContextRelease (params);
         }
     }
-  else if (procedureCode == EpcX2Header::ResourceStatusReporting)
-    {
+
+  else if (procedureCode == EpcX2Header::FailureDetectionInitiation) //A.M
+	{
       if (messageType == EpcX2Header::InitiatingMessage)
         {
-          NS_LOG_LOGIC ("Recv X2 message: RESOURCE STATUS UPDATE");
+		  NS_LOG_LOGIC ("Recv X2 message: FAILURE DETECTION TOKEN");
 
-          EpcX2ResourceStatusUpdateHeader x2ResStatUpdHeader;
-          packet->RemoveHeader (x2ResStatUpdHeader);
+		  EpcX2FailureDetectionTokenHeader x2FailDetTokHeader;
+		  packet->RemoveHeader (x2FailDetTokHeader);
 
-          NS_LOG_INFO ("X2 ResourceStatusUpdate header: " << x2ResStatUpdHeader);
+		  NS_LOG_INFO ("X2 FAILURE DETECTION TOKEN header: " << x2FailDetTokHeader);
 
-          EpcX2SapUser::ResourceStatusUpdateParams params;
-          params.targetCellId = 0;
-          params.enb1MeasurementId = x2ResStatUpdHeader.GetEnb1MeasurementId ();
-          params.enb2MeasurementId = x2ResStatUpdHeader.GetEnb2MeasurementId ();
-          params.cellMeasurementResultList = x2ResStatUpdHeader.GetCellMeasurementResultList ();
+		  EpcX2SapUser::FailureDetectionTokenParams params;
 
-          NS_LOG_LOGIC ("enb1MeasurementId = " << params.enb1MeasurementId);
-          NS_LOG_LOGIC ("enb2MeasurementId = " << params.enb2MeasurementId);
-          NS_LOG_LOGIC ("cellMeasurementResultList size = " << params.cellMeasurementResultList.size ());
+		  params.sourceId			= x2FailDetTokHeader.GetSourceId();
+		  params.targetIds			= x2FailDetTokHeader.GetTargetIds();
+		  params.forwardingList 	= x2FailDetTokHeader.GetForwardingList();
+		  params.forwarded			= x2FailDetTokHeader.GetForwarded();
+		  params.forwardingId 		= x2FailDetTokHeader.GetForwardingId();
 
-          m_x2SapUser->RecvResourceStatusUpdate (params);
+
+		  NS_LOG_LOGIC ("SourceCellId = " << params.sourceId);
+		  NS_LOG_LOGIC ("SourceCellId = " << params.targetIds.size());
+
+
+		  m_x2SapUser->RecvFailureDetectionToken (params);
         }
-    }
+	}
+  else if (procedureCode == EpcX2Header::ForwardingFailureDetectionInitiation) //A.M
+	{
+      if (messageType == EpcX2Header::InitiatingMessage)
+        {
+		  NS_LOG_LOGIC ("Recv X2 message: FAILURE DETECTION TOKEN");
+
+		  EpcX2FailureDetectionTokenHeader x2FailDetTokHeader;
+		  packet->RemoveHeader (x2FailDetTokHeader);
+
+		  NS_LOG_INFO ("X2 FAILURE DETECTION TOKEN header: " << x2FailDetTokHeader);
+
+		  EpcX2SapUser::FailureDetectionTokenParams params;
+
+		  params.sourceId			= x2FailDetTokHeader.GetSourceId();
+		  params.targetIds			= x2FailDetTokHeader.GetTargetIds();
+		  params.forwardingList 	= x2FailDetTokHeader.GetForwardingList();
+		  params.forwarded			= x2FailDetTokHeader.GetForwarded();
+		  params.forwardingId 		= x2FailDetTokHeader.GetForwardingId();
+
+
+		  NS_LOG_LOGIC ("SourceCellId = " << params.sourceId);
+		  NS_LOG_LOGIC ("SourceCellId = " << params.targetIds.size());
+
+
+		  m_x2SapUser->RecvFailureDetectionToken (params);
+        }
+	}
+  else if (procedureCode == EpcX2Header::TokenAckNACK) //A.M
+	{
+      if (messageType == EpcX2Header::InitiatingMessage)
+        {
+		  NS_LOG_LOGIC ("Recv X2 message: TOKEN ACK/NACK");
+
+		  EpcX2TokenAckNACKHeader x2TokANCKNACKHeader;
+		  packet->RemoveHeader (x2TokANCKNACKHeader);
+
+		  NS_LOG_INFO ("X2 TOKEN ACK/NACK header: " << x2TokANCKNACKHeader);
+
+		  EpcX2SapUser::TokenAckNACKParams params;
+
+		  params.sourceId			= x2TokANCKNACKHeader.GetSourceId();
+		  params.forwardingId		= x2TokANCKNACKHeader.GetforwardingId();
+		  params.tokenOwnerId 		= x2TokANCKNACKHeader.GetTargetId();
+		  params.successStatus		= x2TokANCKNACKHeader.GetACKNACK();
+		  params.noX2ToForward		= x2TokANCKNACKHeader.GetNoX2ToForward();
+		  //params.singleNode			= x2TokANCKNACKHeader.GetSingleNode();
+
+		  m_x2SapUser->RecvTokenAckNACK (params);
+        }
+	}
   else
     {
       NS_ASSERT_MSG (false, "ProcedureCode NOT SUPPORTED!!!");
@@ -681,54 +745,212 @@ EpcX2::DoSendLoadInformation (EpcX2SapProvider::LoadInformationParams params)
   sourceSocket->SendTo (packet, 0, InetSocketAddress (targetIpAddr, m_x2cUdpPort));
 
 }
-
-
-void
-EpcX2::DoSendResourceStatusUpdate (EpcX2SapProvider::ResourceStatusUpdateParams params)
+//A.M
+void EpcX2::DoSendFailureDetectionToken (EpcX2SapProvider::FailureDetectionTokenParams params)
 {
-  NS_LOG_FUNCTION (this);
 
-  NS_LOG_LOGIC ("targetCellId = " << params.targetCellId);
-  NS_LOG_LOGIC ("enb1MeasurementId = " << params.enb1MeasurementId);
-  NS_LOG_LOGIC ("enb2MeasurementId = " << params.enb2MeasurementId);
-  NS_LOG_LOGIC ("cellMeasurementResultList size = " << params.cellMeasurementResultList.size ());
 
-  NS_ASSERT_MSG (m_x2InterfaceSockets.find (params.targetCellId) != m_x2InterfaceSockets.end (),
-                 "Missing infos for targetCellId = " << params.targetCellId);
-  Ptr<X2IfaceInfo> socketInfo = m_x2InterfaceSockets [params.targetCellId];
-  Ptr<Socket> sourceSocket = socketInfo->m_localCtrlPlaneSocket;
-  Ipv4Address targetIpAddr = socketInfo->m_remoteIpAddr;
 
-  NS_LOG_LOGIC ("sourceSocket = " << sourceSocket);
-  NS_LOG_LOGIC ("targetIpAddr = " << targetIpAddr);
+	  NS_LOG_FUNCTION (this);
+	  NS_LOG_LOGIC ("SourceId = " << params.sourceId);
+	  NS_LOG_LOGIC ("TargetSize = " << params.targetIds.size());
 
-  NS_LOG_INFO ("Send X2 message: RESOURCE STATUS UPDATE");
+	  uint16_t copyTargetEnbId 			= 0;
+	  std::cout<<": Cell Id = "<<params.sourceId<<" In  DoSendFailureDetectionToken to"<<std::endl;
 
-  // Build the X2 message
-  EpcX2ResourceStatusUpdateHeader x2ResourceStatUpdHeader;
-  x2ResourceStatUpdHeader.SetEnb1MeasurementId (params.enb1MeasurementId);
-  x2ResourceStatUpdHeader.SetEnb2MeasurementId (params.enb2MeasurementId);
-  x2ResourceStatUpdHeader.SetCellMeasurementResultList (params.cellMeasurementResultList);
+	  if( params.forwarded == 0 ) // it is original Token, 0 = not forwarded
+	  {
+		   std::vector<uint16_t>::size_type sz 	= params.targetIds.size();
 
-  EpcX2Header x2Header;
-  x2Header.SetMessageType (EpcX2Header::InitiatingMessage);
-  x2Header.SetProcedureCode (EpcX2Header::ResourceStatusReporting);
-  x2Header.SetLengthOfIes (x2ResourceStatUpdHeader.GetLengthOfIes ());
-  x2Header.SetNumberOfIes (x2ResourceStatUpdHeader.GetNumberOfIes ());
 
-  NS_LOG_INFO ("X2 header: " << x2Header);
-  NS_LOG_INFO ("X2 ResourceStatusUpdate header: " << x2ResourceStatUpdHeader);
+		 	  for(uint16_t j = 0; j < (uint16_t) sz; j++)
+		 	  {
 
-  // Build the X2 packet
-  Ptr<Packet> packet = Create <Packet> ();
-  packet->AddHeader (x2ResourceStatUpdHeader);
-  packet->AddHeader (x2Header);
-  NS_LOG_INFO ("packetLen = " << packet->GetSize ());
+		 		  if(params.sourceId != params.targetIds[j])
+		 		  {
+			 		std::cout<<"\t"<< params.targetIds[j];
+		 			 copyTargetEnbId = params.targetIds[j];
 
-  // Send the X2 message through the socket
-  sourceSocket->SendTo (packet, 0, InetSocketAddress (targetIpAddr, m_x2cUdpPort));
+					  NS_LOG_LOGIC ("Sending FailureDetectionToken msg to targetEnbId = " << copyTargetEnbId);
+					  NS_ASSERT_MSG (m_x2InterfaceSockets.find (copyTargetEnbId) != m_x2InterfaceSockets.end (),
+							  "Missing infos for targetCellId = " << copyTargetEnbId);
+
+
+					  Ptr<X2IfaceInfo> socketInfo = m_x2InterfaceSockets [copyTargetEnbId];
+					  Ptr<Socket> sourceSocket = socketInfo->m_localCtrlPlaneSocket;
+					  Ipv4Address targetIpAddr = socketInfo->m_remoteIpAddr;
+
+					  NS_LOG_LOGIC ("sourceSocket = " << sourceSocket);
+					  NS_LOG_LOGIC ("targetIpAddr = " << targetIpAddr);
+
+					  NS_LOG_INFO ("Send X2 message: FAILURE DETECTION TOKEN");
+
+					  // Build the X2 message
+					  EpcX2FailureDetectionTokenHeader x2FailureDetectionTokenHeader;
+
+
+					  x2FailureDetectionTokenHeader.SetSourceId(params.sourceId);
+					  x2FailureDetectionTokenHeader.SetTargetIds(params.targetIds);
+					  x2FailureDetectionTokenHeader.SetForwardingList(params.forwardingList);
+					  x2FailureDetectionTokenHeader.SetForwarded(params.forwarded);
+					  x2FailureDetectionTokenHeader.SetForwardingId(params.forwardingId);
+
+
+					 EpcX2Header x2Header;
+					 x2Header.SetMessageType (EpcX2Header::InitiatingMessage);
+					 x2Header.SetProcedureCode (EpcX2Header::FailureDetectionInitiation);
+					 x2Header.SetLengthOfIes (x2FailureDetectionTokenHeader.GetLengthOfIes ());
+					 x2Header.SetNumberOfIes (x2FailureDetectionTokenHeader.GetNumberOfIes ());
+
+					 NS_LOG_INFO ("X2 header: " << x2Header);
+					 NS_LOG_INFO ("X2 Failure Detection Token Header: " << x2FailureDetectionTokenHeader);
+
+					 // Build the X2 packet
+					 Ptr<Packet> packet = Create <Packet> ();
+					 packet->AddHeader (x2FailureDetectionTokenHeader);
+					 packet->AddHeader (x2Header);
+					 NS_LOG_INFO ("packetLen = " << packet->GetSize ());
+
+
+
+					 // std::cout<<"Request sent from = "<<params.sourceEnbId<<" to cell = "<<copyTargetEnbId<<std::endl;
+
+					 // Send the X2 message through the socket
+					 sourceSocket->SendTo (packet, 0, InetSocketAddress (targetIpAddr, m_x2cUdpPort));
+					 //Start Timer to wait an ACK back
+
+
+
+		 		  }
+
+		 	 }// end of for loop j
+	 			 std::cout<<"\t"<< std::endl;
+
+	  }
+	  else // it is forwarded Token
+	  {
+
+			  for (std::map<uint16_t, uint16_t>::iterator it = params.forwardingList.begin(); it != params.forwardingList.end(); ++it)
+			  {
+				  if(it->first == params.forwardingId)
+				  {
+					  copyTargetEnbId = it->second;
+					  std::cout<<Simulator::Now().GetMicroSeconds()<<": Cell Id ="<< it->first <<" will forward to cell Id = "<< it->second<<std::endl;
+					  break;
+				  }
+			  }
+
+			  NS_LOG_LOGIC ("Forwarding FailureDetectionToken msg to targetEnbId = " << copyTargetEnbId);
+			  NS_ASSERT_MSG (m_x2InterfaceSockets.find (copyTargetEnbId) != m_x2InterfaceSockets.end (),
+					  "Missing infos for targetCellId = " << copyTargetEnbId);
+
+
+			  Ptr<X2IfaceInfo> socketInfo = m_x2InterfaceSockets [copyTargetEnbId];
+			  Ptr<Socket> sourceSocket = socketInfo->m_localCtrlPlaneSocket;
+			  Ipv4Address targetIpAddr = socketInfo->m_remoteIpAddr;
+
+			  NS_LOG_LOGIC ("sourceSocket = " << sourceSocket);
+			  NS_LOG_LOGIC ("targetIpAddr = " << targetIpAddr);
+
+			  NS_LOG_INFO ("Send X2 message: FAILURE DETECTION TOKEN");
+
+			  // Build the X2 message
+			  EpcX2FailureDetectionTokenHeader x2FailureDetectionTokenHeader;
+
+
+			  x2FailureDetectionTokenHeader.SetSourceId(params.sourceId);
+			  x2FailureDetectionTokenHeader.SetTargetIds(params.targetIds);
+			  x2FailureDetectionTokenHeader.SetForwardingList(params.forwardingList);
+			  x2FailureDetectionTokenHeader.SetForwarded(params.forwarded);
+			  x2FailureDetectionTokenHeader.SetForwardingId(params.forwardingId);
+
+
+			 EpcX2Header x2Header;
+			 x2Header.SetMessageType 	(EpcX2Header::InitiatingMessage);
+			 x2Header.SetProcedureCode 	(EpcX2Header::ForwardingFailureDetectionInitiation);
+			 x2Header.SetLengthOfIes 	(x2FailureDetectionTokenHeader.GetLengthOfIes ());
+			 x2Header.SetNumberOfIes 	(x2FailureDetectionTokenHeader.GetNumberOfIes ());
+
+			 NS_LOG_INFO ("X2 header: " << x2Header);
+			 NS_LOG_INFO ("X2 Forwarding Failure Detection Token Header: " << x2FailureDetectionTokenHeader);
+
+			 // Build the X2 packet
+			 Ptr<Packet> packet = Create <Packet> ();
+			 packet->AddHeader (x2FailureDetectionTokenHeader);
+			 packet->AddHeader (x2Header);
+			 NS_LOG_INFO ("packetLen = " << packet->GetSize ());
+
+
+			 // std::cout<<"Request sent from = "<<params.sourceEnbId<<" to cell = "<<copyTargetEnbId<<std::endl;
+
+			 // Send the X2 message through the socket
+			 sourceSocket->SendTo (packet, 0, InetSocketAddress (targetIpAddr, m_x2cUdpPort));
+	  }
+
+
+
+
+
 
 }
+
+//A.M
+void EpcX2::DoSendTokenAckNACK (EpcX2SapProvider::TokenAckNACKParams params)
+{
+	std::cout<<": Cell Id ="<<params.sourceId<<" In  DoSendTokenAckNACK to"<<params.tokenOwnerId<<std::endl;
+//if(params.sourceId == 5)
+	  NS_LOG_FUNCTION (this);
+	  NS_LOG_LOGIC ("SourceId = " << params.sourceId);
+	  NS_LOG_LOGIC ("Target Id = " << params.tokenOwnerId);
+
+
+	  NS_LOG_LOGIC ("Sending Token Ack/NACK = " << params.tokenOwnerId);
+	  NS_ASSERT_MSG (m_x2InterfaceSockets.find (params.tokenOwnerId) != m_x2InterfaceSockets.end (),
+			  "Missing infos for targetCellId = " << params.tokenOwnerId);
+
+
+	  Ptr<X2IfaceInfo> socketInfo = m_x2InterfaceSockets [params.tokenOwnerId];
+	  Ptr<Socket> sourceSocket = socketInfo->m_localCtrlPlaneSocket;
+	  Ipv4Address targetIpAddr = socketInfo->m_remoteIpAddr;
+
+	  NS_LOG_LOGIC ("sourceSocket = " << sourceSocket);
+	  NS_LOG_LOGIC ("targetIpAddr = " << targetIpAddr);
+
+	  NS_LOG_INFO ("Send X2 message: TOKEN ACK/NACK");
+
+	  // Build the X2 message
+	  EpcX2TokenAckNACKHeader x2TokenAckNACKHeader;
+
+
+	  x2TokenAckNACKHeader.SetSourceId(params.sourceId);
+	  x2TokenAckNACKHeader.SetTargetId(params.tokenOwnerId);
+	  x2TokenAckNACKHeader.SetACKNACK(params.successStatus);
+	  x2TokenAckNACKHeader.SetNoX2ToForward(params.noX2ToForward);
+	  //x2TokenAckNACKHeader.SetSingleNode(params.singleNode);
+	  x2TokenAckNACKHeader.SetforwardingId(params.forwardingId);
+
+	 EpcX2Header x2Header;
+	 x2Header.SetMessageType 	(EpcX2Header::InitiatingMessage);
+	 x2Header.SetProcedureCode 	(EpcX2Header::TokenAckNACK);
+	 x2Header.SetLengthOfIes 	(x2TokenAckNACKHeader.GetLengthOfIes ());
+	 x2Header.SetNumberOfIes 	(x2TokenAckNACKHeader.GetNumberOfIes ());
+
+	 NS_LOG_INFO ("X2 header: " << x2Header);
+	 NS_LOG_INFO ("X2 Token Ack/Nack Header: " << x2TokenAckNACKHeader);
+
+	 // Build the X2 packet
+	 Ptr<Packet> packet = Create <Packet> ();
+	 packet->AddHeader (x2TokenAckNACKHeader);
+	 packet->AddHeader (x2Header);
+	 NS_LOG_INFO ("packetLen = " << packet->GetSize ());
+
+
+	 // std::cout<<"Request sent from = "<<params.sourceEnbId<<" to cell = "<<copyTargetEnbId<<std::endl;
+
+	 // Send the X2 message through the socket
+	 sourceSocket->SendTo (packet, 0, InetSocketAddress (targetIpAddr, m_x2cUdpPort));
+}
+
 
 
 void

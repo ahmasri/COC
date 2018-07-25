@@ -21,14 +21,18 @@
 #ifndef EPC_X2_H
 #define EPC_X2_H
 
+#include <ns3/nstime.h>
 #include "ns3/socket.h"
 #include "ns3/callback.h"
 #include "ns3/ptr.h"
 #include "ns3/object.h"
-
 #include "ns3/epc-x2-sap.h"
-
+#include <ns3/traced-callback.h>
 #include <map>
+#include <set>
+#include <ns3/event-id.h>
+#include <ns3/object.h>
+#include "ns3/simulator.h"
 
 namespace ns3 {
 
@@ -87,6 +91,19 @@ public:
 
 
   /**
+   * The `enbCheckMlbPeriod` attribute. Time period for checking eNB
+   * condition#1, i.e.,  (default 200 ms).
+   */
+ // Time m_enbCheckMlbPeriod = MilliSeconds (200);
+
+  //A.M
+  /**
+   * Th_pre: the MLB condition 1 threshold
+   */
+  uint8_t m_THPre =0.2;
+
+
+  /**
    * \param s the X2 SAP User to be used by this EPC X2 entity
    */
   void SetEpcX2SapUser (EpcX2SapUser * s);
@@ -124,6 +141,13 @@ public:
    */
   void RecvFromX2uSocket (Ptr<Socket> socket);
 
+  //A.M
+  typedef void (* SrcCidTargCidTracedCallback)
+    (uint16_t src, uint16_t dst);
+
+
+
+
 
 protected:
   // Interface provided by EpcX2SapProvider
@@ -133,7 +157,13 @@ protected:
   virtual void DoSendSnStatusTransfer (EpcX2SapProvider::SnStatusTransferParams params);
   virtual void DoSendUeContextRelease (EpcX2SapProvider::UeContextReleaseParams params);
   virtual void DoSendLoadInformation (EpcX2SapProvider::LoadInformationParams params);
-  virtual void DoSendResourceStatusUpdate (EpcX2SapProvider::ResourceStatusUpdateParams params);
+
+
+
+  virtual void DoSendFailureDetectionToken (EpcX2SapProvider::FailureDetectionTokenParams params);
+  virtual void DoSendTokenAckNACK (EpcX2SapProvider::TokenAckNACKParams params);
+
+
   virtual void DoSendUeData (EpcX2SapProvider::UeDataParams params);
 
   EpcX2SapUser* m_x2SapUser;
@@ -141,6 +171,8 @@ protected:
 
 
 private:
+
+
 
   /**
    * Map the targetCellId to the corresponding (sourceSocket, remoteIpAddr) to be used
@@ -160,6 +192,30 @@ private:
   uint16_t m_x2cUdpPort;
   uint16_t m_x2uUdpPort;
 
+  //A.M
+  /**
+   * The `SendResourceStatusRequest` trace source. Fired upon SendResourceStatusRequest
+   * procedure. Exporting source cell ID, and Target cell ID.
+   */
+  TracedCallback< uint16_t, uint16_t> m_sendresourcestatusrequestTrace;
+
+  /**
+   * The `SendResourceStatusResponse` trace source. Fired upon  DoSendResourceStatusResponse
+   * procedure. Exporting source cell ID, and Target cell ID.
+   */
+  TracedCallback< uint16_t, uint16_t> m_sendresourcestatusresponseTrace;
+
+  /**
+   * The `SendResourceStatusUpdate` trace source. Fired upon DoSendResourceStatusUpdate
+   * procedure. Exporting source cell ID, and Target cell ID.
+   */
+  TracedCallback< uint16_t, uint16_t> m_sendresourcestatusupdateTrace;
+
+
+
+
+
+//  void TriggerMlbCondition_1();
 };
 
 } //namespace ns3

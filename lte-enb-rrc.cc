@@ -165,6 +165,9 @@ UeManager::DoInitialize ()
   m_rrc->m_cmacSapProvider->AddUe (m_rnti);
   m_rrc->m_cphySapProvider->AddUe (m_rnti);
 
+  //A.M
+  //m_hysteresisHasUpdated = false;
+
   // setup the eNB side of SRB0
   {
     uint8_t lcid = 0;
@@ -184,6 +187,8 @@ UeManager::DoInitialize ()
     lcinfo.lcId = lcid;
     // leave the rest of lcinfo empty as CCCH (LCID 0) is pre-configured
     m_rrc->m_cmacSapProvider->AddLc (lcinfo, rlc->GetLteMacSapUser ());
+
+
 
   }
 
@@ -492,6 +497,7 @@ LteEnbRrc::DoSendReleaseDataRadioBearer (uint64_t imsi, uint16_t rnti, uint8_t b
 void 
 UeManager::ScheduleRrcConnectionReconfiguration ()
 {
+
   NS_LOG_FUNCTION (this);
   switch (m_state)
     {
@@ -508,8 +514,10 @@ UeManager::ScheduleRrcConnectionReconfiguration ()
 
     case CONNECTED_NORMALLY:
       {
+
         m_pendingRrcConnectionReconfiguration = false;
         LteRrcSap::RrcConnectionReconfiguration msg = BuildRrcConnectionReconfiguration ();
+
         m_rrc->m_rrcSapUser->SendRrcConnectionReconfiguration (m_rnti, msg);
         RecordDataRadioBearersToBeStarted ();
         SwitchToState (CONNECTION_RECONFIGURATION);
@@ -531,6 +539,9 @@ UeManager::PrepareHandover (uint16_t cellId)
     case CONNECTED_NORMALLY:
       {
         m_targetCellId = cellId;
+        //A.M
+        m_hysteresisHasUpdated = false;
+
         EpcX2SapProvider::HandoverRequestParams params;
         params.oldEnbUeX2apId = m_rnti;
         params.cause          = EpcX2SapProvider::HandoverDesirableForRadioReason;
@@ -565,6 +576,7 @@ UeManager::PrepareHandover (uint16_t cellId)
         NS_LOG_LOGIC ("targetCellId = " << params.targetCellId);
         NS_LOG_LOGIC ("mmeUeS1apId = " << params.mmeUeS1apId);
         NS_LOG_LOGIC ("rrcContext   = " << params.rrcContext);
+
 
         m_rrc->m_x2SapProvider->SendHandoverRequest (params);
         SwitchToState (HANDOVER_PREPARATION);
@@ -732,6 +744,11 @@ UeManager::SendUeContextRelease ()
       m_rrc->m_x2SapProvider->SendUeContextRelease (ueCtxReleaseParams);
       SwitchToState (CONNECTED_NORMALLY);
       m_rrc->m_handoverEndOkTrace (m_imsi, m_rrc->m_cellId, m_rnti);
+     //A.M
+     // m_NumHOOKPerCellCounter++;
+      //m_AvgNumHOOKPerCell.insert(std::pair<double,uint16_t>(Simulator::Now().GetSeconds(),m_NumHOOKPerCellCounter))
+      //A.M
+      m_rrc->m_numberUePerEnb++;
       break;
 
     default:
@@ -860,6 +877,7 @@ UeManager::RecvRrcConnectionSetupCompleted (LteRrcSap::RrcConnectionSetupComplet
       StartDataRadioBearers ();
       SwitchToState (CONNECTED_NORMALLY);
       m_rrc->m_connectionEstablishedTrace (m_imsi, m_rrc->m_cellId, m_rnti);
+      m_rrc->m_numberUePerEnb++;
       break;
 
     default:
@@ -968,6 +986,7 @@ UeManager::RecvRrcConnectionReestablishmentComplete (LteRrcSap::RrcConnectionRee
 void 
 UeManager::RecvMeasurementReport (LteRrcSap::MeasurementReport msg)
 {
+
   uint8_t measId = msg.measResults.measId;
   NS_LOG_FUNCTION (this << (uint16_t) measId);
   NS_LOG_LOGIC ("measId " << (uint16_t) measId
@@ -977,6 +996,9 @@ UeManager::RecvMeasurementReport (LteRrcSap::MeasurementReport msg)
                                   << " RSRP " << (uint16_t) msg.measResults.rsrpResult
                                   << " RSRQ " << (uint16_t) msg.measResults.rsrqResult);
 
+  m_servingRSRP = msg.measResults.rsrpResult;
+//  std::cout<<"m_servingRSRP = "<<m_servingRSRP<<" and rsrpResult = "<<(double)msg.measResults.rsrpResult<<std::endl;
+
   for (std::list <LteRrcSap::MeasResultEutra>::iterator it = msg.measResults.measResultListEutra.begin ();
        it != msg.measResults.measResultListEutra.end ();
        ++it)
@@ -984,6 +1006,13 @@ UeManager::RecvMeasurementReport (LteRrcSap::MeasurementReport msg)
       NS_LOG_LOGIC ("neighbour cellId " << it->physCellId
                                         << " RSRP " << (it->haveRsrpResult ? (uint16_t) it->rsrpResult : 255)
                                         << " RSRQ " << (it->haveRsrqResult ? (uint16_t) it->rsrqResult : 255));
+     if(it->haveRsrpResult)
+     {
+		  m_neighRSRP.push_back(it->rsrpResult);
+		  m_neighRSRPId.push_back(it->physCellId);
+		  m_neighRSRPMap.insert(std::pair<uint16_t, uint8_t > (it->physCellId,it->rsrpResult));
+     }
+
     }
 
   if ((m_rrc->m_handoverManagementSapProvider != 0)
@@ -1012,6 +1041,40 @@ UeManager::RecvMeasurementReport (LteRrcSap::MeasurementReport msg)
   m_rrc->m_recvMeasurementReportTrace (m_imsi, m_rrc->m_cellId, m_rnti, msg);
 
 } // end of UeManager::RecvMeasurementReport
+
+double
+UeManager::GetServingRSRPValue ()
+{
+	return m_servingRSRP;
+}
+std::map <uint16_t, uint8_t>
+UeManager::GetNeighRSRPValue()
+{
+
+/*	std::vector<uint8_t>::iterator it2 = m_neighRSRP.begin();
+
+	for (std::vector<uint8_t>::iterator it = m_neighRSRPId.begin(); it != m_neighRSRPId.end(); ++it)
+	{
+
+
+		if((cellId == *it) && (it2 != m_neighRSRP.end()))
+		{
+			return *it2;
+		}
+		++it2;
+	}
+*/
+
+	return m_neighRSRPMap;
+}
+
+void
+UeManager::SetHysteresisValue(double newHys)
+{
+	std::cout<<Simulator::Now().GetSeconds()<< ": In SetHysteresisValue with Hysteresis = "<< newHys << std::endl;
+	m_hysteresis = newHys;
+	m_hysteresisHasUpdated = true;
+}
 
 
 // methods forwarded from CMAC SAP
@@ -1153,13 +1216,33 @@ LteRrcSap::RrcConnectionReconfiguration
 UeManager::BuildRrcConnectionReconfiguration ()
 {
   LteRrcSap::RrcConnectionReconfiguration msg;
-  msg.rrcTransactionIdentifier = GetNewRrcTransactionIdentifier ();
-  msg.haveRadioResourceConfigDedicated = true;
-  msg.radioResourceConfigDedicated = BuildRadioResourceConfigDedicated ();
-  msg.haveMobilityControlInfo = false;
-  msg.haveMeasConfig = true;
-  msg.measConfig = m_rrc->m_ueMeasConfig;
+  msg.rrcTransactionIdentifier 			= GetNewRrcTransactionIdentifier ();
+  msg.haveRadioResourceConfigDedicated 	= true;
+  msg.radioResourceConfigDedicated 		= BuildRadioResourceConfigDedicated ();
+  msg.haveMobilityControlInfo 			= false;
+  msg.haveMeasConfig 					= true;
+  msg.measConfig 						= m_rrc->m_ueMeasConfig;
+  msg.newHysteresis 					= m_hysteresis;
 
+  if(m_hysteresisHasUpdated)
+  {
+	  msg.newHysteresisHasValue			= true;
+  }
+  else
+  {
+	  msg.newHysteresisHasValue			= false;
+  }
+  /*
+  if(m_hysteresis != m_defaultHyst)
+  {
+	  msg.newHysteresisHasValue			= true;
+	 // std::cout<<Simulator::Now().GetSeconds()<<": UE ID = "<<m_imsi<<" with newHysteresisHasValue = true"<<std::endl;
+  }
+  else
+  {
+	  msg.newHysteresisHasValue			= false;
+  }
+  */
   return msg;
 }
 
@@ -1306,14 +1389,34 @@ LteEnbRrc::LteEnbRrc ()
     m_reconfigureUes (false)
 {
   NS_LOG_FUNCTION (this);
-  m_cmacSapUser = new EnbRrcMemberLteEnbCmacSapUser (this);
+  m_cmacSapUser 	= new EnbRrcMemberLteEnbCmacSapUser (this);
   m_handoverManagementSapUser = new MemberLteHandoverManagementSapUser<LteEnbRrc> (this);
-  m_anrSapUser = new MemberLteAnrSapUser<LteEnbRrc> (this);
-  m_ffrRrcSapUser = new MemberLteFfrRrcSapUser<LteEnbRrc> (this);
-  m_rrcSapProvider = new MemberLteEnbRrcSapProvider<LteEnbRrc> (this);
-  m_x2SapUser = new EpcX2SpecificEpcX2SapUser<LteEnbRrc> (this);
-  m_s1SapUser = new MemberEpcEnbS1SapUser<LteEnbRrc> (this);
-  m_cphySapUser = new MemberLteEnbCphySapUser<LteEnbRrc> (this);
+  m_anrSapUser 		= new MemberLteAnrSapUser<LteEnbRrc> (this);
+  m_ffrRrcSapUser 	= new MemberLteFfrRrcSapUser<LteEnbRrc> (this);
+  m_rrcSapProvider 	= new MemberLteEnbRrcSapProvider<LteEnbRrc> (this);
+  m_x2SapUser 		= new EpcX2SpecificEpcX2SapUser<LteEnbRrc> (this);
+  m_s1SapUser 		= new MemberEpcEnbS1SapUser<LteEnbRrc> (this);
+  m_cphySapUser 	= new MemberLteEnbCphySapUser<LteEnbRrc> (this);
+
+ std::map<uint16_t, uint16_t>::iterator it= m_aliveMap.begin();
+
+  for(int j = 1; j <= m_numberOfEnbs;j++, ++it)
+  {
+	   m_aliveMap.insert(std::pair<uint16_t, uint16_t>(j,1));
+  }
+
+
+
+     //Simulator::Schedule (MilliSeconds(10355), &LteEnbRrc::TriggerRLFDetection, this);
+    Simulator::Schedule (MilliSeconds(25355), &LteEnbRrc::TriggerRLFDetection, this);
+
+  	 Simulator::Schedule (MilliSeconds(20), &LteEnbRrc::ActIfPowerDown, this);
+
+
+
+
+	 // Simulator::Schedule (MilliSeconds(400), &LteEnbRrc::TriggerSetPowerFromCodeForTesting, this);
+  	 // Simulator::Schedule (MilliSeconds(600), &LteEnbRrc::CalAvgRSRPPerCell, this); // be carfull to just call for active eNB and not down
 }
 
 
@@ -1386,6 +1489,7 @@ LteEnbRrc::GetTypeId (void)
                    TimeValue (MilliSeconds (15)),
                    MakeTimeAccessor (&LteEnbRrc::m_connectionRequestTimeoutDuration),
                    MakeTimeChecker ())
+
     .AddAttribute ("ConnectionSetupTimeoutDuration",
                    "After accepting connection request, if no RRC CONNECTION "
                    "SETUP COMPLETE is received before this time, the UE "
@@ -1432,6 +1536,45 @@ LteEnbRrc::GetTypeId (void)
                    IntegerValue (-70),
                    MakeIntegerAccessor (&LteEnbRrc::m_qRxLevMin),
                    MakeIntegerChecker<int8_t> (-70, -22))
+
+	//A.M timeout for ACK should be bigger than for NACK
+	.AddAttribute ("AckForFailureTokenTimeoutDuration",
+				   "After a FailureDetectionToken is sent, if  ACK received back "
+				   "before this timer expires then we cancel the timer and if"
+				   "no ACK received then a call for ACKNotReceivedTimeout() is done",
+				   TimeValue (MilliSeconds (400)),
+				   MakeTimeAccessor (&LteEnbRrc::m_ackForFailureTokenTimeoutDuration),
+				   MakeTimeChecker ())
+
+	//A.M timeout for checking the m_alivemap and take decision
+	.AddAttribute ("RLFDecisionDuration",
+				   "After sending link failure detection tokens and when this time expires "
+				   "the cell should take decision on the alive and unresponsive cells",
+				   TimeValue (MilliSeconds (600)),
+				   MakeTimeAccessor (&LteEnbRrc::m_RLFDecisionDuration),
+				   MakeTimeChecker ())
+	//A.M
+	.AddAttribute ("NoForwardFailureTokenTimeoutDuration",
+				   "According to the forwarding list X should forward a Token for me, start this timer"
+				   "and if it expires before I receive a forwarded message from X then call"
+				   "LteEnbRrc::NoForwardTokenReceivedTimeout() send NACK to Token owner.",
+				   TimeValue (MilliSeconds (300)),
+				   MakeTimeAccessor (&LteEnbRrc::m_NoForwardFailureTokenTimeoutDuration),
+				   MakeTimeChecker ())
+/**
+ *
+ */  //
+	/*.AddAttribute ("AdmitResourceStatusRequest",
+				   "Whether to admit an X2 resource status request from another eNB",
+				   BooleanValue (true),
+				   MakeBooleanAccessor (&LteEnbRrc::m_admitResourceStatusRequest),
+				   MakeBooleanChecker ())
+*/
+	.AddAttribute ("AdmitResourceStatusRequest",
+				   "Whether to admit an X2 resource status update from another eNB",
+					BooleanValue (true),
+					MakeBooleanAccessor (&LteEnbRrc::m_admitResourceStatusUpdate),
+					MakeBooleanChecker ())
 
     // Handover related attributes
     .AddAttribute ("AdmitHandoverRequest",
@@ -1488,8 +1631,385 @@ LteEnbRrc::GetTypeId (void)
                      "trace fired when measurement report is received",
                      MakeTraceSourceAccessor (&LteEnbRrc::m_recvMeasurementReportTrace),
                      "ns3::LteEnbRrc::ReceiveReportTracedCallback")
+
+	/**.AddTraceSource ("CheckMlbCondtion_1",
+					 "trace fired when Check MlB Condition_1 is received",
+					 MakeTraceSourceAccessor (&LteEnbRrc::DoCheckMlbCondition_1),
+					 "ns3::LteEnbRrc::DoCheckMlbCondition_1")
+	 */
   ;
   return tid;
+}
+
+//A.M
+void
+LteEnbRrc::TriggerSetPowerFromCodeForTesting ()
+{
+	m_cphySapProvider->SetTxPower(43.0);
+}
+//A.M
+void
+LteEnbRrc::UpdateIntraEnbRelation(uint16_t cellId)
+{
+	switch(cellId)
+	{
+	case 1:
+		m_anrSapProvider->SetNoX2(2);
+		m_anrSapProvider->SetNoX2(3);
+		break;
+	case 2:
+		m_anrSapProvider->SetNoX2(1);
+		m_anrSapProvider->SetNoX2(3);
+		break;
+	case 3:
+		m_anrSapProvider->SetNoX2(1);
+		m_anrSapProvider->SetNoX2(2);
+		break;
+	case 4:
+		m_anrSapProvider->SetNoX2(5);
+		m_anrSapProvider->SetNoX2(6);
+		break;
+	case 5:
+		m_anrSapProvider->SetNoX2(6);
+		m_anrSapProvider->SetNoX2(4);
+		break;
+	case 6:
+		m_anrSapProvider->SetNoX2(4);
+		m_anrSapProvider->SetNoX2(5);
+		break;
+	case 7:
+		m_anrSapProvider->SetNoX2(8);
+		m_anrSapProvider->SetNoX2(9);
+		break;
+	case 8:
+		m_anrSapProvider->SetNoX2(7);
+		m_anrSapProvider->SetNoX2(9);
+		break;
+	case 9:
+		m_anrSapProvider->SetNoX2(7);
+		m_anrSapProvider->SetNoX2(8);
+		break;
+	case 10:
+		m_anrSapProvider->SetNoX2(11);
+		m_anrSapProvider->SetNoX2(12);
+		break;
+	case 11:
+		m_anrSapProvider->SetNoX2(10);
+		m_anrSapProvider->SetNoX2(12);
+		break;
+	case 12:
+		m_anrSapProvider->SetNoX2(10);
+		m_anrSapProvider->SetNoX2(11);
+		break;
+	case 13:
+		m_anrSapProvider->SetNoX2(14);
+		m_anrSapProvider->SetNoX2(15);
+		break;
+	case 14:
+		m_anrSapProvider->SetNoX2(13);
+		m_anrSapProvider->SetNoX2(15);
+		break;
+	case 15:
+		m_anrSapProvider->SetNoX2(13);
+		m_anrSapProvider->SetNoX2(14);
+		break;
+	case 16:
+		m_anrSapProvider->SetNoX2(17);
+		m_anrSapProvider->SetNoX2(18);
+		break;
+	case 17:
+		m_anrSapProvider->SetNoX2(16);
+		m_anrSapProvider->SetNoX2(18);
+		break;
+	case 18:
+		m_anrSapProvider->SetNoX2(16);
+		m_anrSapProvider->SetNoX2(17);
+		break;
+	case 19:
+		m_anrSapProvider->SetNoX2(20);
+		m_anrSapProvider->SetNoX2(21);
+		break;
+	case 20:
+		m_anrSapProvider->SetNoX2(19);
+		m_anrSapProvider->SetNoX2(21);
+		break;
+	case 21:
+		m_anrSapProvider->SetNoX2(19);
+		m_anrSapProvider->SetNoX2(20);
+		break;
+	default:
+		std::cout<<"Cell Id should be between 1 and 21:"<< cellId;
+		break;
+	}
+}
+//A.M
+void LteEnbRrc::CalAvgRSRPPerCell()
+{
+	double count = 0;
+	double count2 = 0;
+	double tmpRSRP = 0;
+	uint16_t tmpAvgUEOverTime = 0;
+	uint16_t tmpAvgRSRPOverTime = 0;
+	    for (std::map<uint16_t, Ptr<UeManager> >::iterator it1 = m_ueMap.begin ();
+	         it1 != m_ueMap.end ();
+	         ++it1)
+	    {
+
+	    		Ptr<UeManager> ueManager = GetUeManager (it1->first);
+				std::map<uint16_t, uint8_t> tmp;
+				if((ueManager->m_servingRSRP*-1) >= -105) // to avoid too low RSRP (-inf)
+				{
+					tmpRSRP += (ueManager->m_servingRSRP*-1);
+					count++;
+				}
+	    }
+	    if(count != 0)
+	    {
+	    	m_UeSharePerCell.insert(std::pair<double,double>(Simulator::Now().GetSeconds(), count));
+	    	m_AvgRSRP.insert(std::pair<double,double>(Simulator::Now().GetSeconds(),(tmpRSRP/count)));
+
+	    }
+
+	  if(Simulator::Now().GetSeconds() == 30)
+	  {
+		  double tmp = 0.0;
+		  std::cout<<"N = 151, Hys = 5 With MLB and  no cell is down"<<std::endl;
+		  std::cout<<m_cellId<<" , "<<"Time"<<" , "<<"Avg RSRP"<<" , "<<" UEPerCell(%)"<<std::endl;
+		  for(std::map<double, double>::iterator it = m_AvgRSRP.begin(); it != m_AvgRSRP.end(); ++it)
+		  {
+			 auto it2 = m_UeSharePerCell.find(it->first);
+			     if(it2 != m_UeSharePerCell.end())
+			      {
+			    	 tmp = it2->second;
+			    	 tmpAvgUEOverTime+=tmp;
+			    	 count2++;
+			      }
+			     tmpAvgRSRPOverTime+=it->second;
+			  std::cout<<"  ,  "<<it->first<<"  ,  "<<it->second<<"  ,  "<<tmp<<std::endl;
+		  }
+		 // std::cout<<"  ,  "<<"  ,  "<<(uint16_t)tmpAvgRSRPOverTime/count2<<"  ,  "<<(uint16_t)tmpAvgUEOverTime/count2<<std::endl;
+
+	  }
+	  Simulator::Schedule (MilliSeconds(200), &LteEnbRrc::CalAvgRSRPPerCell, this);
+}
+//A.M
+void LteEnbRrc::ActIfPowerDown()
+{
+
+	if(m_cphySapProvider->GetReferenceSignalPower() == 0.0)
+	{
+		m_PowerDown = true;
+		//std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") m_PowerDown = "<<m_PowerDown<<std::endl;
+		//std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") m_ueMap.empty() = "<<m_ueMap.empty()<<std::endl;
+	}
+	else
+	{
+		m_PowerDown = false;
+	}
+
+
+	if(m_PowerDown && !m_ueMap.empty()&&!m_RLFRemoveUeSched)
+	{
+		std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") ReferenceSignalPower = "<<(double)m_cphySapProvider->GetReferenceSignalPower()<<std::endl;
+
+		m_RLFRemoveUeSched = true;
+		std::cout<<"In ActIfPowerDown and the RLFRemoveUe is scheduled for cell "<<m_cellId<<std::endl;
+		Simulator::Schedule (MilliSeconds(1000), &LteEnbRrc::RLFRemoveUe, this);
+
+
+		//std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") Removed all UEs = "<<m_numberUePerEnb<<std::endl;
+	}
+//	std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") with Num of UEs = "<<m_ueMap.size()<<std::endl;
+
+
+
+	if(Simulator::Now().GetSeconds()==4.0|| Simulator::Now().GetSeconds()==5.0||Simulator::Now().GetSeconds()==19.0||Simulator::Now().GetSeconds()==29.0)
+	{
+		std::cout<<Simulator::Now().GetSeconds()<<": In cell ID "<< m_cellId<< " Num_UE = "<<m_numberUePerEnb << " =="<<(int)m_ueMap.size()<<std::endl;
+		for (std::map<uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.begin (); it != m_ueMap.end (); ++it)
+		{
+			std::cout<<"\t "<<it->second->GetImsi();
+		}
+		std::cout<<std::endl;
+	}
+
+	Simulator::Schedule (MilliSeconds(20), &LteEnbRrc::ActIfPowerDown, this);
+}
+//A.M
+void LteEnbRrc::RLFRemoveUe()
+{
+
+	std::cout<<"IMSI : \t "<<std::endl;
+	for (std::map<uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.begin (); it != m_ueMap.end (); ++it)
+	{
+		m_tmp.push_back(it->first);
+		std::cout<<"\t "<<it->second->GetImsi();
+	}
+	std::cout<<std::endl;
+
+	std::cout<<"RNTI : \t "<<std::endl;
+	std::vector<uint16_t>::size_type sz = m_tmp.size();
+	for (int i = 0; i< (int) sz; i++)
+	{
+		std::cout<<"\t "<<m_tmp[i];
+		RemoveUe(m_tmp[i]);
+	}
+	m_tmp.clear();
+	std::cout<<std::endl;
+	m_numberUePerEnb = 0;
+	m_RLFRemoveUeSched = false;
+}
+//A.M
+void
+LteEnbRrc::TriggerRLFDetection()
+{
+
+	if(m_numberUePerEnb != 0 && (m_cphySapProvider->GetReferenceSignalPower() > 0.0))
+	{
+
+	   EpcX2Sap::FailureDetectionTokenParams failParams;
+	   failParams.sourceId 		= m_cellId;
+	   failParams.forwardingId 	= 9999;
+	   failParams.forwarded 	= 0;
+	   uint16_t tmp 			= 0;
+	   uint16_t tmp2 			= 0;
+
+		 for (int j = 1 ; j <= m_numberOfEnbs; j++)
+		 {
+			 if(j != m_cellId)
+			 {
+
+				 if (m_anrSapProvider != 0)
+					{
+					  // ensure that proper neighbour relationship exists between source and target cells
+					  bool noHo = m_anrSapProvider->GetNoHo (j);
+					  bool noX2 = m_anrSapProvider->GetNoX2 (j);
+					  NS_LOG_DEBUG (this << " cellId = " << m_cellId
+										 << ", targetCellId=" << j
+										 << " NRT.NoHo=" << noHo << " NRT.NoX2=" << noX2);
+
+						  std::cout<<"Cell ID = "<<m_cellId<<" has relation to cell ID ="<<j<<", No HO ="<< (uint16_t)noHo<<" and No X2 = "<<(uint16_t)noX2<<std::endl;
+
+					  if (noHo || noX2)
+						{
+						  	  NS_LOG_LOGIC (this << " handover to cell " << j
+											 << " is not allowed by ANR");
+						}
+					  else
+					    {
+							 failParams.targetIds.push_back(j);
+					    }
+					}
+
+			 }
+		 }
+
+
+		 int j = 0;
+
+		 for (; j < (int)((failParams.targetIds.size())-1); j++)
+		 {
+
+			 tmp =  failParams.targetIds[j];
+			 tmp2 = failParams.targetIds[j+1];
+
+			 failParams.forwardingList.insert(std::pair<uint16_t,uint16_t>(tmp, tmp2));
+
+		 }
+		 std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<< m_cellId<<" failParams.targetIds.size()" <<failParams.targetIds.size()<<std::endl;
+		 std::cout<<": j = "<< j<<std::endl;
+		bool  dontSendRLF = false;
+		 if(failParams.targetIds.size() > 1)// to avoid the case of one user 20 -- 20 error
+		 {
+			 tmp 	= failParams.targetIds[j];
+			 tmp2 	= failParams.targetIds[0];
+			 failParams.forwardingList.insert(std::pair<uint16_t,uint16_t>(tmp,tmp2));
+		 }
+		else
+		{
+		//	  failParams.forwardingList size will be zero and no forwarding will be working
+				std::cout<<Simulator::Now().GetSeconds()<<" In Cell "<< m_cellId << "with empty forwardingList"<<std::endl;
+			 dontSendRLF = true;
+		}
+
+
+		 if(!dontSendRLF)
+
+		 {
+			 ackRecv  tmpMap2;
+			 nackRecv  tmpMap3;
+			 //initialize first:
+			 for (j = 1 ; j <= m_numberOfEnbs; j++)
+			{
+
+				/*m_ackForFailureTokenTimeoutMap.insert(std::pair<uint16_t, EventId>(9999,Simulator::Schedule (MilliSeconds (99999999),
+														&LteEnbRrc::ACKNotReceivedTimeout,this,9999,9999,
+														failParams.forwardingList))) ;
+
+				 m_ackRecvMap.insert(std::pair<uint16_t,uint16_t>(9999,9999));*/
+
+				 tmpMap2.forwardingId 		= 9999;
+				 tmpMap2.forwardingForId 	= 9999;
+				 tmpMap2.ownerId 			= 9999;
+				 m_ackRecvMap.push_back(tmpMap2);
+
+				 tmpMap3.forwardingId 		= 9999;
+				 tmpMap3.forwardingForId 	= 9999;
+				 tmpMap3.ownerId 			= 9999;
+				 m_nackRecvMap.push_back(tmpMap3);
+
+			}
+			 AckForFailureTokenTimeout tmpMap;
+			 //schedule
+			 for (j =0 ; j < (int)failParams.targetIds.size(); j++)
+			{
+				/* m_ackForFailureTokenTimeoutMap.insert(std::pair<uint16_t, EventId>(std::pair<uint16_t, uint16_t>(failParams.targetIds[j],failParams.sourceId),
+														Simulator::Schedule (m_ackForFailureTokenTimeoutDuration,
+														&LteEnbRrc::ACKNotReceivedTimeout,
+														this,failParams.sourceId,failParams.targetIds[j],failParams.forwardingList))) ;
+				 */
+				// m_ackForToOwnerRelTimeoutMap.insert(std::pair<uint16_t, uint16_t>(failParams.targetIds[j],failParams.sourceId));
+
+
+
+				tmpMap.owner = failParams.sourceId;
+				tmpMap.forwardId = failParams.targetIds[j];
+				tmpMap.noAck = Simulator::Schedule (m_ackForFailureTokenTimeoutDuration, &LteEnbRrc::ACKNotReceivedTimeout,
+																					this,failParams.targetIds[j],failParams.forwardingList,failParams.sourceId);
+
+				m_ackForFailureTokenTimeoutMap.push_back(tmpMap);
+			 }
+
+			m_x2SapProvider->SendFailureDetectionToken(failParams);
+
+			Simulator::Schedule (m_RLFDecisionDuration, &LteEnbRrc::RLFTakeDecision, this);
+
+			std::cout<< " In TriggerRLFDetection\t"<<std::endl;
+			for(std::map<uint16_t, uint16_t>::iterator it = failParams.forwardingList.begin(); it != failParams.forwardingList.end(); ++it)
+			{
+				std::cout<< it->first <<"\t"<<it->second<<std::endl;
+			}
+		}
+		 else
+		 {
+				std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+				std::cout<<Simulator::Now().GetSeconds()<<": In TriggerRLFDetection  = "<<m_cellId<<"No Forwarding list"<<std::endl;
+				std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+		 }
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In TriggerRLFDetection  = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
+
+}
+
+
+uint16_t LteEnbRrc::GetCellId()
+{
+	return m_cellId;
 }
 
 void
@@ -1583,14 +2103,14 @@ LteEnbRrc::SetLteMacSapProvider (LteMacSapProvider * s)
   m_macSapProvider = s;
 }
 
-void 
+void
 LteEnbRrc::SetS1SapProvider (EpcEnbS1SapProvider * s)
 {
   m_s1SapProvider = s;
 }
 
 
-EpcEnbS1SapUser* 
+EpcEnbS1SapUser*
 LteEnbRrc::GetS1SapUser ()
 {
   return m_s1SapUser;
@@ -1703,6 +2223,9 @@ LteEnbRrc::AddUeMeasReportConfig (LteRrcSap::ReportConfigEutra config)
   reportConfig.reportConfigId = nextId;
   reportConfig.reportConfigEutra = config;
 
+
+
+
   // create the measurement identity
   LteRrcSap::MeasIdToAddMod measId;
   measId.measId = nextId;
@@ -1712,6 +2235,7 @@ LteEnbRrc::AddUeMeasReportConfig (LteRrcSap::ReportConfigEutra config)
   // add both to the list of UE measurement configuration
   m_ueMeasConfig.reportConfigToAddModList.push_back (reportConfig);
   m_ueMeasConfig.measIdToAddModList.push_back (measId);
+
 
   return nextId;
 }
@@ -1809,7 +2333,7 @@ LteEnbRrc::SendData (Ptr<Packet> packet)
   return true;
 }
 
-void 
+void
 LteEnbRrc::SetForwardUpCallback (Callback <void, Ptr<Packet> > cb)
 {
   m_forwardUpCallback = cb;
@@ -1869,7 +2393,7 @@ LteEnbRrc::SendHandoverRequest (uint16_t rnti, uint16_t cellId)
 
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   ueManager->PrepareHandover (cellId);
- 
+
 }
 
 void 
@@ -1883,52 +2407,143 @@ void
 LteEnbRrc::DoRecvRrcConnectionRequest (uint16_t rnti, LteRrcSap::RrcConnectionRequest msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvRrcConnectionRequest (msg);
+  //A.M
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		GetUeManager (rnti)->RecvRrcConnectionRequest (msg);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvRrcConnectionRequest from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
 void
 LteEnbRrc::DoRecvRrcConnectionSetupCompleted (uint16_t rnti, LteRrcSap::RrcConnectionSetupCompleted msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvRrcConnectionSetupCompleted (msg);
+  //A.M
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		GetUeManager (rnti)->RecvRrcConnectionSetupCompleted (msg);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvRrcConnectionSetupCompleted from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
 void
 LteEnbRrc::DoRecvRrcConnectionReconfigurationCompleted (uint16_t rnti, LteRrcSap::RrcConnectionReconfigurationCompleted msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvRrcConnectionReconfigurationCompleted (msg);
+  //A.M
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		GetUeManager (rnti)->RecvRrcConnectionReconfigurationCompleted (msg);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvRrcConnectionReconfigurationCompleted from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
-void 
+void
 LteEnbRrc::DoRecvRrcConnectionReestablishmentRequest (uint16_t rnti, LteRrcSap::RrcConnectionReestablishmentRequest msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvRrcConnectionReestablishmentRequest (msg);
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		GetUeManager (rnti)->RecvRrcConnectionReestablishmentRequest (msg);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvRrcConnectionReestablishmentRequest from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
-void 
+void
 LteEnbRrc::DoRecvRrcConnectionReestablishmentComplete (uint16_t rnti, LteRrcSap::RrcConnectionReestablishmentComplete msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvRrcConnectionReestablishmentComplete (msg);
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		GetUeManager (rnti)->RecvRrcConnectionReestablishmentComplete (msg);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvRrcConnectionReestablishmentComplete from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
-void 
+
+void
 LteEnbRrc::DoRecvMeasurementReport (uint16_t rnti, LteRrcSap::MeasurementReport msg)
 {
   NS_LOG_FUNCTION (this << rnti);
-  GetUeManager (rnti)->RecvMeasurementReport (msg);
-}
+  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		//if(m_cellId == 5)
+		//std::cout<<"\n"<<Simulator::Now().GetSeconds()<<": Cell ID= "<<m_cellId<<" with TX power = "<<(uint16_t)m_cphySapProvider->GetReferenceSignalPower()<<std::endl;
 
-void 
+		GetUeManager (rnti)->RecvMeasurementReport (msg);
+
+	}
+	else
+	{
+		//std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		//std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvHandoverRequest from UE ID = "<<GetUeManager (rnti)->GetImsi()<<" to cell ID = "<<m_cellId<<" which is DOWN"<<std::endl;
+		//std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
+
+}
+/*
+void
+LteEnbRrc::DoRecvMlbCondition_1 (uint16_t cellId)
+{
+  NS_LOG_FUNCTION (this << cellId);
+  std::cout <<Simulator::Now()<<":CellId ="<<cellId<<"in DoRecvMlbCondition_1"<<std::endl;
+ // m_handoverManagementSapProvider->s;
+
+  EpcX2Sap::ResourceStatusRequestParams params;
+  params.sourceEnbId = cellId;
+  params.enb1MeasurementId = 0;
+  params.enb2MeasurementId = 1;
+ // params.sourceEnbId = cellId;
+ // params.targetCellId = 2;
+  m_x2SapProvider->SendResourceStatusRequest(params);
+
+}*/
+/*
+void
+LteEnbRrc::DoCheckMlbCondition_1 (uint16_t cellId)
+{
+  NS_LOG_FUNCTION (this << cellId);
+  std::cout <<Simulator::Now()<<":CellId ="<<cellId<<"in DoCheckMlbCondition_1"<<std::endl;
+
+  //m_rrcSapUser->SendMlbCondition_1(cellId);
+
+}
+*/
+void
 LteEnbRrc::DoDataRadioBearerSetupRequest (EpcEnbS1SapUser::DataRadioBearerSetupRequestParameters request)
 {
   Ptr<UeManager> ueManager = GetUeManager (request.rnti);
   ueManager->SetupDataRadioBearer (request.bearer, request.bearerId, request.gtpTeid, request.transportLayerAddress);
 }
 
-void 
+void
 LteEnbRrc::DoPathSwitchRequestAcknowledge (EpcEnbS1SapUser::PathSwitchRequestAcknowledgeParameters params)
 {
   Ptr<UeManager> ueManager = GetUeManager (params.rnti);
@@ -1938,98 +2553,113 @@ LteEnbRrc::DoPathSwitchRequestAcknowledge (EpcEnbS1SapUser::PathSwitchRequestAck
 void
 LteEnbRrc::DoRecvHandoverRequest (EpcX2SapUser::HandoverRequestParams req)
 {
+
   NS_LOG_FUNCTION (this);
 
-  NS_LOG_LOGIC ("Recv X2 message: HANDOVER REQUEST");
+  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
 
-  NS_LOG_LOGIC ("oldEnbUeX2apId = " << req.oldEnbUeX2apId);
-  NS_LOG_LOGIC ("sourceCellId = " << req.sourceCellId);
-  NS_LOG_LOGIC ("targetCellId = " << req.targetCellId);
-  NS_LOG_LOGIC ("mmeUeS1apId = " << req.mmeUeS1apId);
+	  NS_LOG_LOGIC ("Recv X2 message: HANDOVER REQUEST");
 
-  NS_ASSERT (req.targetCellId == m_cellId);
+	  NS_LOG_LOGIC ("oldEnbUeX2apId = " << req.oldEnbUeX2apId);
+	  NS_LOG_LOGIC ("sourceCellId = " << req.sourceCellId);
+	  NS_LOG_LOGIC ("targetCellId = " << req.targetCellId);
+	  NS_LOG_LOGIC ("mmeUeS1apId = " << req.mmeUeS1apId);
 
-  if (m_admitHandoverRequest == false)
-    {
-      NS_LOG_INFO ("rejecting handover request from cellId " << req.sourceCellId);
-      EpcX2Sap::HandoverPreparationFailureParams res;
-      res.oldEnbUeX2apId =  req.oldEnbUeX2apId;
-      res.sourceCellId = req.sourceCellId;
-      res.targetCellId = req.targetCellId;
-      res.cause = 0;
-      res.criticalityDiagnostics = 0;
-      m_x2SapProvider->SendHandoverPreparationFailure (res);
-      return;
-    }
+	  NS_ASSERT (req.targetCellId == m_cellId);
 
-  uint16_t rnti = AddUe (UeManager::HANDOVER_JOINING);
-  LteEnbCmacSapProvider::AllocateNcRaPreambleReturnValue anrcrv = m_cmacSapProvider->AllocateNcRaPreamble (rnti);
-  if (anrcrv.valid == false)
-    {
-      NS_LOG_INFO (this << " failed to allocate a preamble for non-contention based RA => cannot accept HO");
-      RemoveUe (rnti);
-      NS_FATAL_ERROR ("should trigger HO Preparation Failure, but it is not implemented");
-      return;
-    }
+	  if (m_admitHandoverRequest == false)
+		{
+		  NS_LOG_INFO ("rejecting handover request from cellId " << req.sourceCellId);
+		  EpcX2Sap::HandoverPreparationFailureParams res;
+		  res.oldEnbUeX2apId =  req.oldEnbUeX2apId;
+		  res.sourceCellId = req.sourceCellId;
+		  res.targetCellId = req.targetCellId;
+		  res.cause = 0;
+		  res.criticalityDiagnostics = 0;
+		  m_x2SapProvider->SendHandoverPreparationFailure (res);
+		  return;
+		}
 
-  Ptr<UeManager> ueManager = GetUeManager (rnti);
-  ueManager->SetSource (req.sourceCellId, req.oldEnbUeX2apId);
-  ueManager->SetImsi (req.mmeUeS1apId);
+	  uint16_t rnti = AddUe (UeManager::HANDOVER_JOINING);
+	  LteEnbCmacSapProvider::AllocateNcRaPreambleReturnValue anrcrv = m_cmacSapProvider->AllocateNcRaPreamble (rnti);
+	  if (anrcrv.valid == false)
+		{
+		  std::cout<<Simulator::Now().GetSeconds()<<": In Cell ID "<<m_cellId<< ": UE ID = "<< rnti <<" Not allowed to handover"<<std::endl;
+		  NS_LOG_INFO (this << " failed to allocate a preamble for non-contention based RA => cannot accept HO");
+		  RemoveUe (rnti);
+		  NS_FATAL_ERROR ("should trigger HO Preparation Failure, but it is not implemented");
+		  return;
+		}
 
-  EpcX2SapProvider::HandoverRequestAckParams ackParams;
-  ackParams.oldEnbUeX2apId = req.oldEnbUeX2apId;
-  ackParams.newEnbUeX2apId = rnti;
-  ackParams.sourceCellId = req.sourceCellId;
-  ackParams.targetCellId = req.targetCellId;
+	  Ptr<UeManager> ueManager = GetUeManager (rnti);
+	  ueManager->SetSource (req.sourceCellId, req.oldEnbUeX2apId);
+	  ueManager->SetImsi (req.mmeUeS1apId);
 
-  for (std::vector <EpcX2Sap::ErabToBeSetupItem>::iterator it = req.bearers.begin ();
-       it != req.bearers.end ();
-       ++it)
-    {
-      ueManager->SetupDataRadioBearer (it->erabLevelQosParameters, it->erabId, it->gtpTeid, it->transportLayerAddress);
-      EpcX2Sap::ErabAdmittedItem i;
-      i.erabId = it->erabId;
-      ackParams.admittedBearers.push_back (i);
-    }
+	  EpcX2SapProvider::HandoverRequestAckParams ackParams;
+	  ackParams.oldEnbUeX2apId = req.oldEnbUeX2apId;
+	  ackParams.newEnbUeX2apId = rnti;
+	  ackParams.sourceCellId = req.sourceCellId;
+	  ackParams.targetCellId = req.targetCellId;
 
-  LteRrcSap::RrcConnectionReconfiguration handoverCommand = ueManager->GetRrcConnectionReconfigurationForHandover ();
-  handoverCommand.haveMobilityControlInfo = true;
-  handoverCommand.mobilityControlInfo.targetPhysCellId = m_cellId;
-  handoverCommand.mobilityControlInfo.haveCarrierFreq = true;
-  handoverCommand.mobilityControlInfo.carrierFreq.dlCarrierFreq = m_dlEarfcn;
-  handoverCommand.mobilityControlInfo.carrierFreq.ulCarrierFreq = m_ulEarfcn;
-  handoverCommand.mobilityControlInfo.haveCarrierBandwidth = true;
-  handoverCommand.mobilityControlInfo.carrierBandwidth.dlBandwidth = m_dlBandwidth;
-  handoverCommand.mobilityControlInfo.carrierBandwidth.ulBandwidth = m_ulBandwidth;
-  handoverCommand.mobilityControlInfo.newUeIdentity = rnti;
-  handoverCommand.mobilityControlInfo.haveRachConfigDedicated = true;
-  handoverCommand.mobilityControlInfo.rachConfigDedicated.raPreambleIndex = anrcrv.raPreambleId;
-  handoverCommand.mobilityControlInfo.rachConfigDedicated.raPrachMaskIndex = anrcrv.raPrachMaskIndex;
+	  for (std::vector <EpcX2Sap::ErabToBeSetupItem>::iterator it = req.bearers.begin ();
+		   it != req.bearers.end ();
+		   ++it)
+		{
+		  ueManager->SetupDataRadioBearer (it->erabLevelQosParameters, it->erabId, it->gtpTeid, it->transportLayerAddress);
+		  EpcX2Sap::ErabAdmittedItem i;
+		  i.erabId = it->erabId;
+		  ackParams.admittedBearers.push_back (i);
+		}
 
-  LteEnbCmacSapProvider::RachConfig rc = m_cmacSapProvider->GetRachConfig ();
-  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.preambleInfo.numberOfRaPreambles = rc.numberOfRaPreambles;
-  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.raSupervisionInfo.preambleTransMax = rc.preambleTransMax;
-  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.raSupervisionInfo.raResponseWindowSize = rc.raResponseWindowSize;
+	  LteRrcSap::RrcConnectionReconfiguration handoverCommand = ueManager->GetRrcConnectionReconfigurationForHandover ();
+	  handoverCommand.haveMobilityControlInfo = true;
+	  handoverCommand.mobilityControlInfo.targetPhysCellId = m_cellId;
+	  handoverCommand.mobilityControlInfo.haveCarrierFreq = true;
+	  handoverCommand.mobilityControlInfo.carrierFreq.dlCarrierFreq = m_dlEarfcn;
+	  handoverCommand.mobilityControlInfo.carrierFreq.ulCarrierFreq = m_ulEarfcn;
+	  handoverCommand.mobilityControlInfo.haveCarrierBandwidth = true;
+	  handoverCommand.mobilityControlInfo.carrierBandwidth.dlBandwidth = m_dlBandwidth;
+	  handoverCommand.mobilityControlInfo.carrierBandwidth.ulBandwidth = m_ulBandwidth;
+	  handoverCommand.mobilityControlInfo.newUeIdentity = rnti;
+	  handoverCommand.mobilityControlInfo.haveRachConfigDedicated = true;
+	  handoverCommand.mobilityControlInfo.rachConfigDedicated.raPreambleIndex = anrcrv.raPreambleId;
+	  handoverCommand.mobilityControlInfo.rachConfigDedicated.raPrachMaskIndex = anrcrv.raPrachMaskIndex;
 
-  Ptr<Packet> encodedHandoverCommand = m_rrcSapUser->EncodeHandoverCommand (handoverCommand);
+	  LteEnbCmacSapProvider::RachConfig rc = m_cmacSapProvider->GetRachConfig ();
+	  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.preambleInfo.numberOfRaPreambles = rc.numberOfRaPreambles;
+	  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.raSupervisionInfo.preambleTransMax = rc.preambleTransMax;
+	  handoverCommand.mobilityControlInfo.radioResourceConfigCommon.rachConfigCommon.raSupervisionInfo.raResponseWindowSize = rc.raResponseWindowSize;
 
-  ackParams.rrcContext = encodedHandoverCommand;
+	  Ptr<Packet> encodedHandoverCommand = m_rrcSapUser->EncodeHandoverCommand (handoverCommand);
 
-  NS_LOG_LOGIC ("Send X2 message: HANDOVER REQUEST ACK");
+	  ackParams.rrcContext = encodedHandoverCommand;
 
-  NS_LOG_LOGIC ("oldEnbUeX2apId = " << ackParams.oldEnbUeX2apId);
-  NS_LOG_LOGIC ("newEnbUeX2apId = " << ackParams.newEnbUeX2apId);
-  NS_LOG_LOGIC ("sourceCellId = " << ackParams.sourceCellId);
-  NS_LOG_LOGIC ("targetCellId = " << ackParams.targetCellId);
+	  NS_LOG_LOGIC ("Send X2 message: HANDOVER REQUEST ACK");
 
-  m_x2SapProvider->SendHandoverRequestAck (ackParams);
+	  NS_LOG_LOGIC ("oldEnbUeX2apId = " << ackParams.oldEnbUeX2apId);
+	  NS_LOG_LOGIC ("newEnbUeX2apId = " << ackParams.newEnbUeX2apId);
+	  NS_LOG_LOGIC ("sourceCellId = " << ackParams.sourceCellId);
+	  NS_LOG_LOGIC ("targetCellId = " << ackParams.targetCellId);
+
+	  m_x2SapProvider->SendHandoverRequestAck (ackParams);
+	}
+	else
+	{
+		std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+		std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvHandoverRequest from cell ID = "<< req.sourceCellId<<" to cell ID = "<< m_cellId<<" which is DOWN"<<std::endl;
+		std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+	}
 }
 
 void
 LteEnbRrc::DoRecvHandoverRequestAck (EpcX2SapUser::HandoverRequestAckParams params)
 {
   NS_LOG_FUNCTION (this);
-
+  //A.M , I added the if  here
+if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+{
   NS_LOG_LOGIC ("Recv X2 message: HANDOVER REQUEST ACK");
 
   NS_LOG_LOGIC ("oldEnbUeX2apId = " << params.oldEnbUeX2apId);
@@ -2041,12 +2671,21 @@ LteEnbRrc::DoRecvHandoverRequestAck (EpcX2SapUser::HandoverRequestAckParams para
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   ueManager->RecvHandoverRequestAck (params);
 }
+else
+{
+	std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+	std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvHandoverRequest from cell ID = "<< params.sourceCellId<<" to cell ID = "<< m_cellId<<" which is DOWN"<<std::endl;
+	std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+}
+}
 
 void
 LteEnbRrc::DoRecvHandoverPreparationFailure (EpcX2SapUser::HandoverPreparationFailureParams params)
 {
   NS_LOG_FUNCTION (this);
-
+  //A.M , I added the if  here
+if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+{
   NS_LOG_LOGIC ("Recv X2 message: HANDOVER PREPARATION FAILURE");
 
   NS_LOG_LOGIC ("oldEnbUeX2apId = " << params.oldEnbUeX2apId);
@@ -2059,10 +2698,20 @@ LteEnbRrc::DoRecvHandoverPreparationFailure (EpcX2SapUser::HandoverPreparationFa
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   ueManager->RecvHandoverPreparationFailure (params.targetCellId);
 }
+else
+{
+	std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+	std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvHandoverRequest from cell ID = "<< params.sourceCellId<<" to cell ID = "<< m_cellId<<" which is DOWN"<<std::endl;
+	std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+}
+}
 
 void
 LteEnbRrc::DoRecvSnStatusTransfer (EpcX2SapUser::SnStatusTransferParams params)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this);
 
   NS_LOG_LOGIC ("Recv X2 message: SN STATUS TRANSFER");
@@ -2074,26 +2723,36 @@ LteEnbRrc::DoRecvSnStatusTransfer (EpcX2SapUser::SnStatusTransferParams params)
   uint16_t rnti = params.newEnbUeX2apId;
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   ueManager->RecvSnStatusTransfer (params);
+	}
 }
 
 void
 LteEnbRrc::DoRecvUeContextRelease (EpcX2SapUser::UeContextReleaseParams params)
 {
-  NS_LOG_FUNCTION (this);
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+	  NS_LOG_FUNCTION (this);
 
-  NS_LOG_LOGIC ("Recv X2 message: UE CONTEXT RELEASE");
+	  NS_LOG_LOGIC ("Recv X2 message: UE CONTEXT RELEASE");
 
-  NS_LOG_LOGIC ("oldEnbUeX2apId = " << params.oldEnbUeX2apId);
-  NS_LOG_LOGIC ("newEnbUeX2apId = " << params.newEnbUeX2apId);
+	  NS_LOG_LOGIC ("oldEnbUeX2apId = " << params.oldEnbUeX2apId);
+	  NS_LOG_LOGIC ("newEnbUeX2apId = " << params.newEnbUeX2apId);
 
-  uint16_t rnti = params.oldEnbUeX2apId;
-  GetUeManager (rnti)->RecvUeContextRelease (params);
-  RemoveUe (rnti);
+	  uint16_t rnti = params.oldEnbUeX2apId;
+	  GetUeManager (rnti)->RecvUeContextRelease (params);
+	  RemoveUe (rnti);
+	}
+  // A.M
+  m_numberUePerEnb--;
 }
 
 void
 LteEnbRrc::DoRecvLoadInformation (EpcX2SapUser::LoadInformationParams params)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this);
 
   NS_LOG_LOGIC ("Recv X2 message: LOAD INFORMATION");
@@ -2101,23 +2760,719 @@ LteEnbRrc::DoRecvLoadInformation (EpcX2SapUser::LoadInformationParams params)
   NS_LOG_LOGIC ("Number of cellInformationItems = " << params.cellInformationList.size ());
 
   m_ffrRrcSapProvider->RecvLoadInformation(params);
+	}
 }
 
-void
-LteEnbRrc::DoRecvResourceStatusUpdate (EpcX2SapUser::ResourceStatusUpdateParams params)
+//A.M
+void LteEnbRrc::RLFTakeDecision()
 {
-  NS_LOG_FUNCTION (this);
+	std::cout<<Simulator::Now().GetSeconds()<<": In cell Id ("<< m_cellId <<") RLFTakeDecision has to be made"<<std::endl;
+	std::cout<<Simulator::Now().GetMilliSeconds()<<": List of alive or unresponsive cells from the point of view of cell id ="<<m_cellId<<std::endl;
+	if(m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		for(std::map<uint16_t,uint16_t>::iterator it = m_aliveMap.begin(); it != m_aliveMap.end(); ++it)
+		{
+				std::cout<<it->first <<" with unresponsive reports  = "<<it->second<<std::endl;
 
-  NS_LOG_LOGIC ("Recv X2 message: RESOURCE STATUS UPDATE");
+				if(it->second > 1)
+				{
+					if(m_numberUePerEnb != 0)
+					{
+						if((m_dlBandwidth/m_numberUePerEnb) >= 4) // under-loaded has 75% free
+						{
 
-  NS_LOG_LOGIC ("Number of cellMeasurementResultItems = " << params.cellMeasurementResultList.size ());
+							for (std::map<uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.begin (); it != m_ueMap.end (); ++it)
+							{
 
-  NS_ASSERT ("Processing of RESOURCE STATUS UPDATE X2 message IS NOT IMPLEMENTED");
+								Ptr<UeManager> ueManager = GetUeManager (it->first);
+								ueManager->SetHysteresisValue(m_KeepHysteresis);
+								ueManager->ScheduleRrcConnectionReconfiguration();
+
+
+							}
+							//increase Tx power to 46
+							m_cphySapProvider->SetTxPower(45.0); // increase power two steps
+							std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<<m_cellId<< "Increases Tx power tp 43.0 dBm"<<std::endl;
+
+
+
+						}
+						else if((m_dlBandwidth/m_numberUePerEnb) >= 2) // moderate loaded has 50 % free
+						{
+							for (std::map<uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.begin (); it != m_ueMap.end (); ++it)
+							{
+
+								Ptr<UeManager> ueManager = GetUeManager (it->first);
+								ueManager->SetHysteresisValue(m_KeepHysteresis/2);
+								ueManager->ScheduleRrcConnectionReconfiguration();
+
+
+							}
+							//increase Tx power to 46
+							m_cphySapProvider->SetTxPower(44.0); // increase power one steps
+							std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<<m_cellId<< "Increases Tx power tp 43.0 dBm"<<std::endl;
+
+
+						}
+						else // over-loaded less than 50 %
+						{
+							for (std::map<uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.begin (); it != m_ueMap.end (); ++it)
+							{
+
+								Ptr<UeManager> ueManager = GetUeManager (it->first);
+								//ueManager->SetHysteresisValue(m_myHysteresis);
+								ueManager->SetHysteresisValue(rand()% 6);
+
+								ueManager->ScheduleRrcConnectionReconfiguration();
+								//TriggerMlbCondition_1();
+
+							}
+						}
+
+					}
+				}
+		}
+	}
 }
+
+//A.M
+void LteEnbRrc::ACKNotReceivedTimeout(uint16_t forwardingId, std::map<uint16_t,uint16_t> forwardingList, uint16_t owner)
+{
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+	std::cout<<Simulator::Now().GetMilliSeconds()<<" : Cell Id = "<<owner<<" In ACKNotReceivedTimeout , no ACK from path "<<forwardingId<<std::endl;
+	uint16_t tmp1 = 0;
+	//uint16_t tmp2 = 0;
+/*
+	for(std::map<uint16_t,uint16_t>::iterator it= forwardingList.begin(); it != forwardingList.end(); ++it)
+	{
+		if(it->first == targId) // to get which user the targId cell was going to forward the Token for (it->second).
+		{
+			for(std::map<uint16_t,uint16_t>::iterator it2= m_ackRecvMap.begin(); it2 != m_ackRecvMap.end(); ++it2)
+			{
+				if(it2->second == targId) // it means that targId is alive and its corresponding forward cell is unresponsive
+				{
+					for(std::map<uint16_t,uint16_t>::iterator it3= m_aliveMap.begin(); it3 != m_aliveMap.end(); ++it3)
+					{
+						if(it3->first == it->second)
+						{
+							tmp1 = it3->second;
+							tmp1++;
+							m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1++));
+						}
+					}
+				}
+				else //it means that targId is unresponsive also and its corresponding forward cell is unresponsive
+				{
+
+					for(std::map<uint16_t,uint16_t>::iterator it3= m_aliveMap.begin(); it3 != m_aliveMap.end(); ++it3)
+					{
+						//this wil garantee for us to make both as unresponsive if both are down
+						if(it3->first == it->second)
+						{
+							tmp1 = it3->second;
+							tmp1++;
+							m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+						}
+						else if (it3->first == targId)
+						{
+							tmp2 = it3->second;
+							tmp2++;
+							m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+						}
+
+					}
+				}
+			}
+		}
+	}
+*/
+ /*   auto it = forwardingList.find(targId); // to get it->second
+    if(it != forwardingList.end())
+    {
+
+		for(std::map<uint16_t,uint16_t>::iterator it2= m_ackRecvMap.begin(); it2 != m_ackRecvMap.end(); ++it2)
+		{
+			if(it2->second == targId) // it means that targId is alive because it sends ACK to owner when it received forwarded Token and the cell to whom it forwarded the Token is unresponsive
+			{
+			    auto it3 = m_aliveMap.find(it->second);
+			    if(it3 != m_aliveMap.end())
+			    {
+			    	std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it3->first<<std::endl;
+			    	//found
+					tmp1 = it3->second;
+					std::cout<<" old value = "<<tmp1<<std::endl;
+					tmp1++;
+			    	//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+					m_aliveMap.at(it3->first) = tmp1;
+
+					std::cout<<" New value = "<<m_aliveMap.find(it3->first)->second<<std::endl;
+			    }
+			}
+			else //it means that targId is unresponsive also and its corresponding forward cell is unresponsive
+			{
+				//check if NACK received from it->second
+
+				for(std::map<uint16_t,uint16_t>::iterator it5= m_nackRecvMap.begin(); it5 != m_ackRecvMap.end(); ++it5)
+				{
+					if(it5->second == it->second) // it means that srcId is alive because it sends NACK to owner when it didn't received forwarded Token from targId
+					{
+						auto it6 = m_aliveMap.find(targId);
+							if (it6 != m_aliveMap.end())
+							{
+								tmp2 = it6->second;
+								std::cout<<" old value = "<<tmp2<<std::endl;
+								tmp2++;
+							//	m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+								m_aliveMap.at(it6->first) = tmp2;
+								std::cout<<" New value = "<<m_aliveMap.find(it6->first)->second<<std::endl;
+							}
+
+							else
+							{
+								auto it3 = m_aliveMap.find(it->second);
+								std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it3->first<<std::endl;
+								//this will guarantee for us to make both as unresponsive if both are down
+								if(it3 != m_aliveMap.end())
+								{
+									tmp1 = it3->second;
+									std::cout<<" old value = "<<tmp1<<std::endl;
+									tmp1++;
+									//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+									m_aliveMap.at(it3->first) = tmp1;
+									std::cout<<" New value = "<<m_aliveMap.find(it3->first)->second<<std::endl;
+								}
+								auto it4 = m_aliveMap.find(targId);
+								if (it4 != m_aliveMap.end())
+								{
+									tmp2 = it4->second;
+									std::cout<<" old value = "<<tmp2<<std::endl;
+									tmp2++;
+								//	m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+									m_aliveMap.at(it4->first) = tmp2;
+									std::cout<<" New value = "<<m_aliveMap.find(it4->first)->second<<std::endl;
+								}
+							}
+					}
+				}
+			}
+		}
+    }
+*/
+    bool ForwardingIdUnresponsive 		= true;
+    bool ForwardingForIdUnresponsive 	= true;
+
+    uint16_t forwardingForId = 0;
+
+    auto it1 = forwardingList.find(forwardingId); // Find the forwardingForId from the forwardingId (it->second)
+
+if(it1 != forwardingList.end())
+  {
+    	forwardingForId = it1->second;
+
+
+	std::vector<ackRecv>::size_type sz = m_ackRecvMap.size();
+	for(int j = 0; j < (int)sz; j++)
+	{
+		if(m_ackRecvMap[j].forwardingForId == forwardingId && m_ackRecvMap[j].ownerId == owner)
+		{
+			ForwardingIdUnresponsive = false;
+		}
+		if(m_ackRecvMap[j].forwardingForId == forwardingForId && m_ackRecvMap[j].ownerId == owner)
+		{
+			ForwardingForIdUnresponsive = false;
+		}
+	}
+
+	std::vector<ackRecv>::size_type sz2 = m_nackRecvMap.size();
+	for(int j = 0; j < (int)sz2; j++)
+	{
+		if(m_nackRecvMap[j].forwardingForId == forwardingId && m_nackRecvMap[j].ownerId == owner)
+		{
+			ForwardingIdUnresponsive = false;
+		}
+		if(m_nackRecvMap[j].forwardingForId ==  forwardingForId && m_nackRecvMap[j].ownerId == owner)
+		{
+			ForwardingForIdUnresponsive = false;
+		}
+	}
+
+	if(ForwardingIdUnresponsive)
+	{
+		auto it2 = m_aliveMap.find(forwardingId);
+		std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for forwardingId cell  "<<forwardingId<<std::endl;
+		//this will guarantee for us to make both as unresponsive if both are down
+		if(it2 != m_aliveMap.end())
+		{
+			tmp1 = it2->second;
+			std::cout<<" old value = "<<tmp1<<std::endl;
+			tmp1++;
+			//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+			m_aliveMap.at(it2->first) = tmp1;
+			std::cout<<" New value = "<<m_aliveMap.find(it2->first)->second<<std::endl;
+		}
+	}
+	if(ForwardingForIdUnresponsive)
+	{
+		auto it2 = m_aliveMap.find(forwardingForId);
+		std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for  forwardingForId cell  "<<forwardingForId<<std::endl;
+		//this will guarantee for us to make both as unresponsive if both are down
+		if(it2 != m_aliveMap.end())
+		{
+			tmp1 = it2->second;
+			std::cout<<" old value = "<<tmp1<<std::endl;
+			tmp1++;
+			//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+			m_aliveMap.at(it2->first) = tmp1;
+			std::cout<<" New value = "<<m_aliveMap.find(it2->first)->second<<std::endl;
+		}
+	}
+  }// end of if (it1 != forwardingList.end())
+else
+{
+	// forwarding list is empty
+	std::cout <<"Cell Id "<<m_cellId<<" in ACKNotReceivedTimeout with forwarding list is empty"<<std::endl;
+}
+
+/*
+    bool marked = false;
+    bool marked2 = false;
+    //uint16_t forwardingForId = 0;
+    auto it1 = forwardingList.find(forwardingId); // Find the forwardingForId from the forwardingId (it->second)
+    if(it1 != forwardingList.end())
+    {
+    	forwardingForId = it1->second;
+
+    	std::vector<nackRecv>::size_type sz = m_nackRecvMap.size();
+    	for(int j = 0; j < (int)sz; j++)
+    	{
+    		if(m_nackRecvMap[j].forwardingForId == forwardingForId && m_nackRecvMap[j].ownerId == owner)
+    		{
+    			std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is already updated for forwardingId cell "<<forwardingId<<std::endl;
+    			std::cout<<"because the forwardingForId cell "<<forwardingForId<<" already send NACK "<<std::endl;
+    			m_nackRecvMap[j].forwardingId 		= 9999;
+    			m_nackRecvMap[j].forwardingForId 	= 9999;
+    			m_nackRecvMap[j].ownerId 			= 9999;
+				marked = true;
+				marked2 = true;
+				break;
+    		}
+    	}
+
+		if(!marked)
+		{
+
+	    	std::vector<ackRecv>::size_type sz = m_ackRecvMap.size();
+	    	for(int j = 0; j < (int)sz; j++)
+	    	{
+	    		if((m_ackRecvMap[j].forwardingForId == forwardingId || m_nackRecvMap[j].forwardingForId == forwardingId )&& m_ackRecvMap[j].ownerId == owner)
+	    		{
+
+					//update it1->second
+					auto it4 = m_aliveMap.find(forwardingForId);
+					std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for forwardingForId cell C "<<forwardingForId<<std::endl;
+	    			std::cout<<"because the forwardingId cell "<<forwardingId<<" already send ACK back "<<std::endl;
+					if (it4 != m_aliveMap.end())
+					{
+						tmp2 = it4->second;
+						std::cout<<" old value = "<<tmp2<<std::endl;
+						tmp2++;
+					//	m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+						m_aliveMap.at(it4->first) = tmp2;
+						std::cout<<" New value = "<<m_aliveMap.find(it4->first)->second<<std::endl;
+					}
+	    			m_ackRecvMap[j].forwardingId 		= 9999;
+	    			m_ackRecvMap[j].forwardingForId 	= 9999;
+	    			m_ackRecvMap[j].ownerId 			= 9999;
+					marked2 = true;
+					break;
+
+
+
+	    		}
+	    	}
+		}
+
+
+		if(!marked2)
+		{
+			//this will guarantee for us to make both as unresponsive if both are down
+			//update both targId and it1->second
+			auto it5 = m_aliveMap.find(forwardingForId);
+			std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for BOTH forwardingForId cell  "<<forwardingForId<<std::endl;
+			//this will guarantee for us to make both as unresponsive if both are down
+			if(it5 != m_aliveMap.end())
+			{
+				tmp1 = it5->second;
+				std::cout<<" old value = "<<tmp1<<std::endl;
+				tmp1++;
+				//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+				m_aliveMap.at(it5->first) = tmp1;
+				std::cout<<" New value = "<<m_aliveMap.find(it5->first)->second<<std::endl;
+			}
+			auto it6 = m_aliveMap.find(forwardingId);
+			std::cout<<" and for   for forwardingId cell "<<forwardingId<<std::endl;
+			if (it6 != m_aliveMap.end())
+			{
+				tmp2 = it6->second;
+				std::cout<<" old value = "<<tmp2<<std::endl;
+				tmp2++;
+			//	m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+				m_aliveMap.at(it6->first) = tmp2;
+				std::cout<<" New value = "<<m_aliveMap.find(it6->first)->second<<std::endl;
+			}
+		}
+    }
+*/
+
+
+
+	/*bool markedB = false;
+	bool markedC = false;
+	    // to get to whom targId should be forwarding the Token (it1->second)
+		for(std::map<uint16_t,uint16_t>::iterator it1= forwardingList.begin(); it1 != forwardingList.end(); ++it1)
+		{
+			if(it1->first == targId)
+			{
+				for(std::map<uint16_t,uint16_t>::iterator it2= m_nackRecvMap.begin(); it2 != m_ackRecvMap.end(); ++it2)
+				{
+					if(it2->second == it1->second) // it means that it1->second is alive because it sends NACK to owner srcId when it didn't received forwarded Token from targId
+					{
+						std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it2->first<<std::endl;
+						//update  m_aliveMap for targId
+						markedB = true;
+					}
+				}
+				if(!markedB)
+				{
+					for(std::map<uint16_t,uint16_t>::iterator it3= m_ackRecvMap.begin(); it3 != m_ackRecvMap.end(); ++it3)
+					{
+						if(it3->second == targId) // it means that targId is alive because it sends ACK to owner when it received forwarded Token from someone else and the cell to whom it forwarded the Token is unresponsive
+						{
+							std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it3->first<<std::endl;
+							//update it1->second
+							marked2 = true;
+
+
+
+						}
+
+					}
+				}
+				if(!marked2)
+				{
+
+					//this will guarantee for us to make both as unresponsive if both are down
+					//update both targId and it1->second
+					for(std::map<uint16_t,uint16_t>::iterator it5 = m_aliveMap.begin(); it5 != m_aliveMap.end(); ++it5)
+					{
+						if(it5->second == it1->second)
+						{
+
+							std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it5->first<<std::endl;
+
+							tmp1 = it5->second;
+							std::cout<<" old value = "<<tmp1<<std::endl;
+							tmp1++;
+							//m_aliveMap.insert(std::pair<uint16_t,uint16_t>(it3->first, tmp1));
+							m_aliveMap.at(it5->first) = tmp1;
+							std::cout<<" New value = "<<m_aliveMap.find(it5->first)->second<<std::endl;
+							break;
+						}
+					}
+					for(std::map<uint16_t,uint16_t>::iterator it6 = m_aliveMap.begin(); it6 != m_aliveMap.end(); ++it6)
+					{
+						if(it6->second == targId)
+						{
+							std::cout<<Simulator::Now().GetMilliSeconds()<<": In cell ID "<<m_cellId<<" the m_aliveMap is updated for cell "<<it6->first<<std::endl;
+							tmp2 = it6->second;
+							std::cout<<" old value = "<<tmp2<<std::endl;
+							tmp2++;
+						//	m_aliveMap.insert(std::pair<uint16_t,uint16_t>(targId, tmp2));
+							m_aliveMap.at(it6->first) = tmp2;
+							std::cout<<" New value = "<<m_aliveMap.find(it6->first)->second<<std::endl;
+						}
+					}
+				}
+			}
+		}//end of forwardingList loop
+
+*/
+	}//end of power>0
+}
+//
+//A.M
+void LteEnbRrc::NoForwardTokenReceivedTimeout(uint16_t forwardingId, uint16_t forwardingForId, uint16_t owner)
+{
+	std::cout<<Simulator::Now().GetMilliSeconds()<<" : Cell Id = "<<forwardingForId<<" In NoForwardTokenReceivedTimeout from "<<forwardingId<<" send NACK to Token owner "<<owner<<std::endl;
+
+
+
+	  EpcX2Sap::TokenAckNACKParams paramsAckNack;
+	  paramsAckNack.sourceId 		= m_cellId;
+	  paramsAckNack.forwardingId 	= forwardingId;
+	  paramsAckNack.tokenOwnerId 	= owner;
+	 // paramsAckNack.singleNode		= 0;
+
+	  if(!m_anrSapProvider->GetNoX2(forwardingId))
+	  {
+		  paramsAckNack.noX2ToForward	= 0; // Here you have to check the availability of X2 interface before you send ACK/NACK
+	  }
+	  else
+	  {
+		  paramsAckNack.noX2ToForward	= 1; // Here you have to check the availability of X2 interface before you send ACK/NACK
+		  std::cout<<Simulator::Now().GetMilliSeconds()<<" :Cell Id = "<<forwardingForId<<" has no X2 with"<<forwardingId<<std::endl;
+	  }
+	  paramsAckNack.successStatus 	= 0; // true =1 as I am alive and the forwarding as well , so I am sending ACK
+	  	  	  	  	  	  	  	  	  	 //false = 0, I am alive but NACK back to token owner,
+	  m_x2SapProvider->SendTokenAckNACK(paramsAckNack);
+}
+
+
+void LteEnbRrc::DoRecvFailureDetectionToken (EpcX2SapUser::FailureDetectionTokenParams params)
+{
+	//A.M , I added the if  here 7_6_2018
+	if(m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+
+
+
+
+		   NS_ASSERT (m_configured);
+
+
+		   NS_LOG_FUNCTION (this);
+		   NS_LOG_LOGIC ("Recv X2 message: Failure Detection Token");
+		   NS_LOG_LOGIC (" From SourceCellId 		= " << params.sourceId);
+
+		   if(params.forwarded == 0 && !params.forwardingList.empty()) // it is not forwarded message,0 = not forwarded so forward it for next destination
+		   {
+			 //  std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<<m_cellId<<" : In DoRecvFailureDetectionToken from = "<<params.sourceId<<std::endl;
+			  // std::cout<<"With forwarding List = "<<std::endl;
+			  // for(std::map<uint16_t, uint16_t>::iterator it= params.forwardingList.begin(); it != params.forwardingList.end(); ++it)
+			 //  {
+			//	   std::cout<<it->first<<"\t"<<it->second<<std::endl;
+			  // }
+
+
+
+	    			  //check forwarding list for which user should forward its Token to me and check if there is X2 interface with it
+	    			  NoForwardFailureTokenTimeout tmpMap;
+
+	   			   for(std::map<uint16_t, uint16_t>::iterator it= params.forwardingList.begin(); it != params.forwardingList.end(); ++it)
+	   			   {
+	   				   if(it->second == m_cellId)
+	   				   {
+
+	   					/*m_NoForwardFailureTokenTimeoutMap.insert(std::pair<uint16_t,EventId>
+	   							(params.sourceId, Simulator::Schedule (m_NoForwardFailureTokenTimeoutDuration,
+ 	 	 	 	 	 	 	 	&LteEnbRrc::NoForwardTokenReceivedTimeout,
+ 	 	 	 	 	 	 	 	this,it->first,it->second,params.sourceId)));*/
+	   					   tmpMap.forwardId 	= it->first;
+	   					   tmpMap.forwaredForId = it->second;
+	   					   tmpMap.owner 		= params.sourceId;
+	   					   tmpMap.noForward 	= Simulator::Schedule (m_NoForwardFailureTokenTimeoutDuration,
+	 	 	 	 	 	 	 	 									&LteEnbRrc::NoForwardTokenReceivedTimeout,
+																	this,it->first,it->second,params.sourceId);
+	   					m_NoForwardFailureTokenTimeoutMap.push_back(tmpMap);
+
+	   				   }
+	   			   }
+		    		  /*********************************************************************
+		    		   *   prepare to Forward the same message to next destination         *
+		    		   *********************************************************************/
+				   	   	  params.forwardingId 	= m_cellId;
+				   	   	  params.forwarded 		= 1;
+		    			  m_x2SapProvider->SendFailureDetectionToken(params);
+
+		   }
+		  /* else if(params.forwardingList.empty())
+		   {
+
+   			   for(std::map<uint16_t, uint16_t>::iterator it= params.forwardingList.begin(); it != params.forwardingList.end(); ++it)
+   			   {
+   				   if(it->second == m_cellId )
+   				   {
+
+   					   std::vector<NoForwardFailureTokenTimeout>::size_type sz = m_NoForwardFailureTokenTimeoutMap.size();
+   					   for(int j =0 ; j < (int)sz; j++)
+   					   {
+   						   if(m_NoForwardFailureTokenTimeoutMap[j].forwardId == it->first && m_NoForwardFailureTokenTimeoutMap[j].owner == params.sourceId
+   								   && m_NoForwardFailureTokenTimeoutMap[j].forwaredForId == m_cellId)
+   						   {
+   							   m_NoForwardFailureTokenTimeoutMap[j].noForward.Cancel();
+   							m_NoForwardFailureTokenTimeoutMap[j].forwardId 		= 9999;
+   							m_NoForwardFailureTokenTimeoutMap[j].owner 			= 9999;
+   							m_NoForwardFailureTokenTimeoutMap[j].forwaredForId 	= 9999;
+
+   						   }
+   					   }
+   				   }
+   			   }
+			  std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<<m_cellId<<" : In DoRecv forwarded FailureDetectionToken from = "<<params.forwardingId<<std::endl;
+
+			  EpcX2Sap::TokenAckNACKParams paramsAckNack;
+			  paramsAckNack.sourceId 		= m_cellId;
+			  paramsAckNack.forwardingId 	= m_cellId; // forwardingId is me as I am single Node and I don't have a forwarding List
+			  paramsAckNack.tokenOwnerId 	= params.sourceId;
+			  paramsAckNack.noX2ToForward	= 0; // Here you have to check the availability of X2 interface before you send ACK/NACK
+			  paramsAckNack.successStatus 	= 1; // true as I am alive , so I am sending ACK back to token owner
+			 // paramsAckNack.singleNode		= 1; // Single node
+ 			  m_x2SapProvider->SendTokenAckNACK(paramsAckNack);
+
+		   }*/
+		   else // it is forwarded message
+		   {
+   			   for(std::map<uint16_t, uint16_t>::iterator it= params.forwardingList.begin(); it != params.forwardingList.end(); ++it)
+   			   {
+   				   if(it->second == m_cellId )
+   				   {
+   		   			   /*for(std::map<uint16_t, EventId>::iterator it2= m_NoForwardFailureTokenTimeoutMap.begin(); it2 != m_NoForwardFailureTokenTimeoutMap.end(); ++it2)
+   		   			   {
+   		   				   if(it2->first == params.sourceId)this is worng if // this to be sure that I am canceling the right Token timer for the right owner
+   		   				   {
+   		   					   it2->second.Cancel();
+   		   				   }
+   		   			   }*/
+   					   std::vector<NoForwardFailureTokenTimeout>::size_type sz = m_NoForwardFailureTokenTimeoutMap.size();
+   					   for(int j =0 ; j < (int)sz; j++)
+   					   {
+   						   if(m_NoForwardFailureTokenTimeoutMap[j].forwardId == it->first && m_NoForwardFailureTokenTimeoutMap[j].owner == params.sourceId
+   								   && m_NoForwardFailureTokenTimeoutMap[j].forwaredForId == m_cellId)
+   						   {
+   							   m_NoForwardFailureTokenTimeoutMap[j].noForward.Cancel();
+   							m_NoForwardFailureTokenTimeoutMap[j].forwardId 		= 9999;
+   							m_NoForwardFailureTokenTimeoutMap[j].owner 			= 9999;
+   							m_NoForwardFailureTokenTimeoutMap[j].forwaredForId 	= 9999;
+
+   						   }
+   					   }
+   				   }
+   			   }
+			  std::cout<<Simulator::Now().GetSeconds()<<": Cell Id = "<<m_cellId<<" : In DoRecv forwarded FailureDetectionToken from = "<<params.forwardingId<<std::endl;
+
+			  EpcX2Sap::TokenAckNACKParams paramsAckNack;
+			  paramsAckNack.sourceId 		= m_cellId;
+			  paramsAckNack.forwardingId 	= params.forwardingId;
+			  paramsAckNack.tokenOwnerId 	= params.sourceId;
+			  paramsAckNack.noX2ToForward	= 0; // Here you have to check the availability of X2 interface before you send ACK/NACK
+			  paramsAckNack.successStatus 	= 1; // true as I am alive , so I am sending ACK back to token owner
+			  //paramsAckNack.singleNode		= 0;
+ 			  m_x2SapProvider->SendTokenAckNACK(paramsAckNack);
+		   }
+	}//end of if txPower
+	else
+	{
+		if(params.forwarded == 0)
+		{
+			std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+			std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvFailureDetectionToken cell ID ="<<m_cellId<<" is DOWN"<<std::endl;
+			std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+		}
+		else
+		{
+			std::cout<<"\n"<<"**********************************************************************"<<std::endl;
+			std::cout<<Simulator::Now().GetSeconds()<<": In DoRecvForwardedFailureDetectionToken from "<<params.sourceId<<" to cell ID ="<<m_cellId<<" which is DOWN and will not send ACK back"<<std::endl;
+			std::cout<<"**********************************************************************"<<"\n"<<std::endl;
+		}
+
+	}
+}
+void LteEnbRrc::DoRecvTokenAckNACK	(EpcX2SapUser::TokenAckNACKParams params)
+{
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		std::cout<<Simulator::Now().GetSeconds()<<": Cell Id ="<<m_cellId<<" In  DoRecvTokenAckNACK from"<<params.sourceId<<std::endl;
+
+		// Mark the source as alive
+		if(params.successStatus == 1) // then ACK
+		{
+			/*for (std::map<uint16_t, EventId>::iterator it =m_ackForFailureTokenTimeoutMap.begin() ; it != m_ackForFailureTokenTimeoutMap.end(); ++it)
+			{
+				if(params.forwardingId == it->first)
+				it->second.Cancel();
+			}*/
+			std::vector<AckForFailureTokenTimeout>::size_type sz = m_ackForFailureTokenTimeoutMap.size();
+			for(int j = 0; j < (int)sz ; j++)
+			{
+				if(m_ackForFailureTokenTimeoutMap[j].forwardId == params.forwardingId && m_ackForFailureTokenTimeoutMap[j].owner == params.tokenOwnerId)
+				{
+					m_ackForFailureTokenTimeoutMap[j].noAck.Cancel();
+					//m_ackForFailureTokenTimeoutMap[j].forwardId = 9999;
+					//m_ackForFailureTokenTimeoutMap[j].owner 	= 9999;
+				}
+			/*	else if (params.singleNode == 1 && m_ackForFailureTokenTimeoutMap[j].forwardId == params.sourceId && m_ackForFailureTokenTimeoutMap[j].owner == params.tokenOwnerId)
+				{
+					std::cout<<" In DoRecvTokenAckNACK cancel noACK 20-20 case"<<std::endl;
+					m_ackForFailureTokenTimeoutMap[j].noAck.Cancel();
+				}*/
+			}
+			  //m_ackRecvMap.insert(std::pair<uint16_t,uint16_t>(params.forwardingId,params.sourceId));//  params.sourceId (C) is the source of NACK
+
+			//when I received ack then mark all the path as sent ACK
+				 ackRecv  tmpMap2;
+				 tmpMap2.forwardingId 		= params.forwardingId;
+				 tmpMap2.forwardingForId 	= params.sourceId;
+				 tmpMap2.ownerId 			= m_cellId;
+				 m_ackRecvMap.push_back(tmpMap2);
+
+				 tmpMap2.forwardingId 		= params.sourceId;
+				 tmpMap2.forwardingForId 	= params.forwardingId;
+				 tmpMap2.ownerId 			= m_cellId;
+				 m_ackRecvMap.push_back(tmpMap2);
+
+		}
+		else//NACK
+		{
+			uint16_t tmp = 0;
+
+			std::cout<<Simulator::Now().GetMilliSeconds()<<"the m_aliveMap is updated for cell B = "<<params.forwardingId<<std::endl;
+			auto it = m_aliveMap.find(params.forwardingId);
+			if(it != m_aliveMap.end())
+			{
+				 tmp = it->second;
+				 tmp++;
+			   //m_aliveMap.insert(std::pair<uint16_t, uint16_t>(params.forwardingId,tmp));
+				m_aliveMap.at(params.forwardingId) = tmp;
+			}
+			/*for (std::map<uint16_t, EventId>::iterator it =m_ackForFailureTokenTimeoutMap.begin() ; it != m_ackForFailureTokenTimeoutMap.end(); ++it)
+			{
+				if(params.forwardingId == it->first) // it  should be connected to Token owner so we do not cancel for other owners
+				it->second.Cancel();
+			}*/
+
+			std::vector<AckForFailureTokenTimeout>::size_type sz = m_ackForFailureTokenTimeoutMap.size();
+			for(int j = 0; j < (int)sz ; j++)
+			{
+				if(m_ackForFailureTokenTimeoutMap[j].forwardId == params.forwardingId && m_ackForFailureTokenTimeoutMap[j].owner == params.tokenOwnerId)
+				{
+					m_ackForFailureTokenTimeoutMap[j].noAck.Cancel();
+					//m_ackForFailureTokenTimeoutMap[j].forwardId = 9999;
+					//m_ackForFailureTokenTimeoutMap[j].owner = 9999;
+				}
+			}
+
+		   // m_nackRecvMap.insert(std::pair<uint16_t,uint16_t>(params.forwardingId,params.sourceId));//  params.sourceId (C) is the source of NACK
+
+			nackRecv tmpMap;
+			tmpMap.forwardingId = params.forwardingId;
+			tmpMap.forwardingForId = params.sourceId;//  params.sourceId (C) is the source of NACK
+			tmpMap.ownerId = params.tokenOwnerId;
+			m_nackRecvMap.push_back(tmpMap);
+
+		}
+	}//end of if power >0
+}
+
 
 void
 LteEnbRrc::DoRecvUeData (EpcX2SapUser::UeDataParams params)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this);
 
   NS_LOG_LOGIC ("Recv UE DATA FORWARDING through X2 interface");
@@ -2137,43 +3492,59 @@ LteEnbRrc::DoRecvUeData (EpcX2SapUser::UeDataParams params)
     {
       NS_FATAL_ERROR ("X2-U data received but no X2uTeidInfo found");
     }
+	}//end of if power >0
 }
 
 
 uint16_t 
 LteEnbRrc::DoAllocateTemporaryCellRnti ()
 {
+
   NS_LOG_FUNCTION (this);
   return AddUe (UeManager::INITIAL_RANDOM_ACCESS);
+
 }
 
 void
 LteEnbRrc::DoRrcConfigurationUpdateInd (LteEnbCmacSapUser::UeConfig cmacParams)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   Ptr<UeManager> ueManager = GetUeManager (cmacParams.m_rnti);
   ueManager->CmacUeConfigUpdateInd (cmacParams);
+	}
 }
 
 void
 LteEnbRrc::DoNotifyLcConfigResult (uint16_t rnti, uint8_t lcid, bool success)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this << (uint32_t) rnti);
   NS_FATAL_ERROR ("not implemented");
+	}
 }
 
 
 uint8_t
 LteEnbRrc::DoAddUeMeasReportConfigForHandover (LteRrcSap::ReportConfigEutra reportConfig)
 {
+
   NS_LOG_FUNCTION (this);
   uint8_t measId = AddUeMeasReportConfig (reportConfig);
   m_handoverMeasIds.insert (measId);
   return measId;
+
 }
 
 void
 LteEnbRrc::DoTriggerHandover (uint16_t rnti, uint16_t targetCellId)
 {
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this << rnti << targetCellId);
 
   bool isHandoverAllowed = true;
@@ -2181,7 +3552,8 @@ LteEnbRrc::DoTriggerHandover (uint16_t rnti, uint16_t targetCellId)
   if (m_anrSapProvider != 0)
     {
       // ensure that proper neighbour relationship exists between source and target cells
-      bool noHo = m_anrSapProvider->GetNoHo (targetCellId);
+
+	  bool noHo = m_anrSapProvider->GetNoHo (targetCellId);
       bool noX2 = m_anrSapProvider->GetNoX2 (targetCellId);
       NS_LOG_DEBUG (this << " cellId=" << m_cellId
                          << " targetCellId=" << targetCellId
@@ -2194,6 +3566,7 @@ LteEnbRrc::DoTriggerHandover (uint16_t rnti, uint16_t targetCellId)
                              << " is not allowed by ANR");
         }
     }
+
 
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   NS_ASSERT_MSG (ueManager != 0, "Cannot find UE context with RNTI " << rnti);
@@ -2210,47 +3583,62 @@ LteEnbRrc::DoTriggerHandover (uint16_t rnti, uint16_t targetCellId)
     {
       // initiate handover execution
       ueManager->PrepareHandover (targetCellId);
+
     }
+	}//end of if power >0
 }
 
 uint8_t
 LteEnbRrc::DoAddUeMeasReportConfigForAnr (LteRrcSap::ReportConfigEutra reportConfig)
 {
+
   NS_LOG_FUNCTION (this);
   uint8_t measId = AddUeMeasReportConfig (reportConfig);
   m_anrMeasIds.insert (measId);
   return measId;
+
 }
 
 uint8_t
 LteEnbRrc::DoAddUeMeasReportConfigForFfr (LteRrcSap::ReportConfigEutra reportConfig)
 {
+
   NS_LOG_FUNCTION (this);
   uint8_t measId = AddUeMeasReportConfig (reportConfig);
   m_ffrMeasIds.insert (measId);
   return measId;
+
 }
 
 void
 LteEnbRrc::DoSetPdschConfigDedicated (uint16_t rnti, LteRrcSap::PdschConfigDedicated pdschConfigDedicated)
 {
+	if(m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
   NS_LOG_FUNCTION (this);
   Ptr<UeManager> ueManager = GetUeManager (rnti);
   ueManager->SetPdschConfigDedicated (pdschConfigDedicated);
+	}
 }
 
 void
 LteEnbRrc::DoSendLoadInformation (EpcX2Sap::LoadInformationParams params)
 {
-  NS_LOG_FUNCTION (this);
+	  //A.M , I added the if  here
+	if( m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+		NS_LOG_FUNCTION (this);
 
-  m_x2SapProvider->SendLoadInformation(params);
+		m_x2SapProvider->SendLoadInformation(params);
+	}
 }
 
 uint16_t
 LteEnbRrc::AddUe (UeManager::State state)
 {
+
   NS_LOG_FUNCTION (this);
+
   bool found = false;
   uint16_t rnti;
   for (rnti = m_lastAllocatedRnti + 1; 
@@ -2269,9 +3657,19 @@ LteEnbRrc::AddUe (UeManager::State state)
   Ptr<UeManager> ueManager = CreateObject<UeManager> (this, rnti, state);
   m_ueMap.insert (std::pair<uint16_t, Ptr<UeManager> > (rnti, ueManager));
   ueManager->Initialize ();
+  //A.M
+  ueManager->m_hysteresisHasUpdated = false;
+  //A.M
+  if(Simulator::Now().GetSeconds() > 4.0)
+  {
+
+	  std::cout<<Simulator::Now().GetSeconds()<<": In Cell ID "<<m_cellId<< ": UE ID RNTI = ("<<rnti<<") and IMSI = ("<< ueManager->GetImsi() <<") is ADDED Newly *********************"<<std::endl;
+  }
   NS_LOG_DEBUG (this << " New UE RNTI " << rnti << " cellId " << m_cellId << " srs CI " << ueManager->GetSrsConfigurationIndex ());
   m_newUeContextTrace (m_cellId, rnti);
   return rnti;
+
+
 }
 
 void
@@ -2279,7 +3677,9 @@ LteEnbRrc::RemoveUe (uint16_t rnti)
 {
   NS_LOG_FUNCTION (this << (uint32_t) rnti);
   std::map <uint16_t, Ptr<UeManager> >::iterator it = m_ueMap.find (rnti);
+
   NS_ASSERT_MSG (it != m_ueMap.end (), "request to remove UE info with unknown rnti " << rnti);
+
   uint16_t srsCi = (*it).second->GetSrsConfigurationIndex ();
   m_ueMap.erase (it);
   m_cmacSapProvider->RemoveUe (rnti);
@@ -2290,6 +3690,7 @@ LteEnbRrc::RemoveUe (uint16_t rnti)
     }
   // need to do this after UeManager has been deleted
   RemoveSrsConfigurationIndex (srsCi); 
+
 }
 
 TypeId
@@ -2371,6 +3772,7 @@ static const uint16_t g_srsCiHigh[SRS_ENTRIES] =      {0, 1, 6, 16, 36, 76, 156,
 void 
 LteEnbRrc::SetSrsPeriodicity (uint32_t p)
 {
+
   NS_LOG_FUNCTION (this << p);
   for (uint32_t id = 1; id < SRS_ENTRIES; ++id)
     {
@@ -2387,6 +3789,7 @@ LteEnbRrc::SetSrsPeriodicity (uint32_t p)
       allowedValues << g_srsPeriodicity[id] << " ";
     }
   NS_FATAL_ERROR ("illecit SRS periodicity value " << p << ". Allowed values: " << allowedValues.str ());
+
 }
 
 uint32_t 
@@ -2402,6 +3805,7 @@ LteEnbRrc::GetSrsPeriodicity () const
 uint16_t
 LteEnbRrc::GetNewSrsConfigurationIndex ()
 {
+
   NS_LOG_FUNCTION (this << m_ueSrsConfigurationIndexSet.size ());
   // SRS
   NS_ASSERT (m_srsCurrentPeriodicityId > 0);
@@ -2484,30 +3888,32 @@ LteEnbRrc::GetLogicalChannelPriority (EpsBearer bearer)
 void
 LteEnbRrc::SendSystemInformation ()
 {
-  // NS_LOG_FUNCTION (this);
+	if(m_cphySapProvider->GetReferenceSignalPower() > 0.0)
+	{
+	  // NS_LOG_FUNCTION (this);
 
-  /*
-   * For simplicity, we use the same periodicity for all SIBs. Note that in real
-   * systems the periodicy of each SIBs could be different.
-   */
-  LteRrcSap::SystemInformation si;
-  si.haveSib2 = true;
-  si.sib2.freqInfo.ulCarrierFreq = m_ulEarfcn;
-  si.sib2.freqInfo.ulBandwidth = m_ulBandwidth;
-  si.sib2.radioResourceConfigCommon.pdschConfigCommon.referenceSignalPower = m_cphySapProvider->GetReferenceSignalPower();
-  si.sib2.radioResourceConfigCommon.pdschConfigCommon.pb = 0;
+	  /*
+	   * For simplicity, we use the same periodicity for all SIBs. Note that in real
+	   * systems the periodicy of each SIBs could be different.
+	   */
+	  LteRrcSap::SystemInformation si;
+	  si.haveSib2 = true;
+	  si.sib2.freqInfo.ulCarrierFreq = m_ulEarfcn;
+	  si.sib2.freqInfo.ulBandwidth = m_ulBandwidth;
+	  si.sib2.radioResourceConfigCommon.pdschConfigCommon.referenceSignalPower = m_cphySapProvider->GetReferenceSignalPower();
+	  si.sib2.radioResourceConfigCommon.pdschConfigCommon.pb = 0;
 
-  LteEnbCmacSapProvider::RachConfig rc = m_cmacSapProvider->GetRachConfig ();
-  LteRrcSap::RachConfigCommon rachConfigCommon;
-  rachConfigCommon.preambleInfo.numberOfRaPreambles = rc.numberOfRaPreambles;
-  rachConfigCommon.raSupervisionInfo.preambleTransMax = rc.preambleTransMax;
-  rachConfigCommon.raSupervisionInfo.raResponseWindowSize = rc.raResponseWindowSize;
-  si.sib2.radioResourceConfigCommon.rachConfigCommon = rachConfigCommon;
+	  LteEnbCmacSapProvider::RachConfig rc = m_cmacSapProvider->GetRachConfig ();
+	  LteRrcSap::RachConfigCommon rachConfigCommon;
+	  rachConfigCommon.preambleInfo.numberOfRaPreambles = rc.numberOfRaPreambles;
+	  rachConfigCommon.raSupervisionInfo.preambleTransMax = rc.preambleTransMax;
+	  rachConfigCommon.raSupervisionInfo.raResponseWindowSize = rc.raResponseWindowSize;
+	  si.sib2.radioResourceConfigCommon.rachConfigCommon = rachConfigCommon;
 
-  m_rrcSapUser->SendSystemInformation (si);
-  Simulator::Schedule (m_systemInformationPeriodicity, &LteEnbRrc::SendSystemInformation, this);
+	  m_rrcSapUser->SendSystemInformation (si);
+	  Simulator::Schedule (m_systemInformationPeriodicity, &LteEnbRrc::SendSystemInformation, this);
+	}
 }
-
 
 } // namespace ns3
 

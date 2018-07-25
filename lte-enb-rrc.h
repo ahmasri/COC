@@ -34,6 +34,7 @@
 #include <ns3/ff-mac-csched-sap.h>
 #include <ns3/lte-pdcp-sap.h>
 #include <ns3/epc-x2-sap.h>
+#include <ns3/epc-x2.h>
 #include <ns3/epc-enb-s1-sap.h>
 #include <ns3/lte-handover-management-sap.h>
 #include <ns3/lte-enb-cphy-sap.h>
@@ -51,7 +52,7 @@ class LteSignalingRadioBearerInfo;
 class LteDataRadioBearerInfo;
 class LteEnbRrc;
 class Packet;
-
+class LteEnbMac;
 
 
 /**
@@ -255,6 +256,23 @@ public:
   /// Part of the RRC protocol. Implement the LteEnbRrcSapProvider::RecvMeasurementReport interface.
   void RecvMeasurementReport (LteRrcSap::MeasurementReport msg);
 
+//A.M ***********************************
+
+  double GetServingRSRPValue();
+  std::map <uint16_t, uint8_t> GetNeighRSRPValue();
+
+  void SetHysteresisValue(double newHys);
+
+  double 						m_servingRSRP;
+  std::vector<double>  			m_neighRSRP;
+  std::vector<uint16_t> 		m_neighRSRPId;
+  std::map <uint16_t, uint8_t> 	m_neighRSRPMap;
+  double 						m_hysteresis 			= 9999.0;  // as it is not assigned yet
+  bool 							m_hysteresisHasUpdated 	= false;
+ // std::map<double,uint16_t> 	m_AvgNumHOOKPerCell;
+ // uint16_t						m_NumHOOKPerCellCounter = 0;
+  // *************************************
+
 
   // METHODS FORWARDED FROM ENB CMAC SAP //////////////////////////////////////
 
@@ -316,6 +334,9 @@ public:
   typedef void (* StateTracedCallback)
     (uint64_t imsi, uint16_t cellId, uint16_t rnti,
      State oldState, State newState);
+
+
+
 
 private:
 
@@ -428,6 +449,8 @@ private:
    */
   Ptr<LteSignalingRadioBearerInfo> m_srb1;
 
+
+
   /**
    * The `C-RNTI` attribute. Cell Radio Network Temporary Identifier.
    */
@@ -470,6 +493,8 @@ private:
    * CONNECTION REQUEST is received.
    */
   EventId m_connectionRequestTimeout;
+
+
   /**
    * Time limit before a _connection setup timeout_ occurs. Set after an RRC
    * CONNECTION SETUP is sent. Calling LteEnbRrc::ConnectionSetupTimeout() when
@@ -496,6 +521,7 @@ private:
    * UE CONTEXT RELEASE is received.
    */
   EventId m_handoverLeavingTimeout;
+
 
 }; // end of `class UeManager`
 
@@ -536,7 +562,7 @@ protected:
   virtual void DoDispose (void);
 public:
   static TypeId GetTypeId (void);
-
+ uint16_t GetCellId();
 
   /**
    * Set the X2 SAP this RRC should interact with
@@ -863,7 +889,27 @@ public:
   typedef void (* ReceiveReportTracedCallback)
     (uint64_t imsi, uint16_t cellId, uint16_t rnti,
      LteRrcSap::MeasurementReport report);
-  
+
+  //A.M
+  int						m_numberOfEnbs	 		= 21;
+  uint16_t					m_totalNumUEInSystem 	= 300; // for stats matters only
+  uint8_t 					m_THPre   		 		= 2;
+  uint8_t 					m_Thavail 		 		= 0.6;
+  uint8_t 					m_Thpost  		 		= 0.8;
+  std::map<uint16_t, bool> 	m_MlbOkMap;
+  uint16_t 					m_numberUePerEnb 		= 0;
+  uint8_t 					m_myRSRP;
+  std::vector<uint8_t> 		m_neighRSRP;
+  uint16_t 					m_targetMLBId;
+  double 					m_myHysteresis 	 		= 3.0;
+  double 					m_KeepHysteresis 	 	= 12.0;
+  std::map<double,double> 	m_AvgRSRP;
+  std::map<double,double> 	m_UeSharePerCell; // percentage of UEs per cell with respect to total number of UEs in the network
+  bool						m_PowerDown				= false;
+	std::vector<uint16_t> 	m_tmp;
+	bool 					m_RLFRemoveUeSched 	=false;
+
+
 private:
 
 
@@ -884,6 +930,12 @@ private:
   /// Part of the RRC protocol. Forwarding LteEnbRrcSapProvider::RecvMeasurementReport interface to UeManager::RecvMeasurementReport
   void DoRecvMeasurementReport (uint16_t rnti, LteRrcSap::MeasurementReport msg);
 
+
+  void CalAvgRSRPPerCell();
+  void RLFRemoveUe();
+  //void DoRecvMlbCondition_1(uint16_t cellId);
+ // void DoCheckMlbCondition_1(uint16_t cellId);
+
   // S1 SAP methods
 
   void DoDataRadioBearerSetupRequest (EpcEnbS1SapUser::DataRadioBearerSetupRequestParameters params);
@@ -897,8 +949,28 @@ private:
   void DoRecvSnStatusTransfer (EpcX2SapUser::SnStatusTransferParams params);
   void DoRecvUeContextRelease (EpcX2SapUser::UeContextReleaseParams params);
   void DoRecvLoadInformation (EpcX2SapUser::LoadInformationParams params);
-  void DoRecvResourceStatusUpdate (EpcX2SapUser::ResourceStatusUpdateParams params);
+
+
+  //A.M
+  void DoRecvFailureDetectionToken 	(EpcX2SapUser::FailureDetectionTokenParams params);
+  void DoRecvTokenAckNACK	(EpcX2SapUser::TokenAckNACKParams params);
+
+  void ACKNotReceivedTimeout(uint16_t forwardingId, std::map<uint16_t,uint16_t> forwardingList, uint16_t owner);
+
+  void NoForwardTokenReceivedTimeout(uint16_t forwardingId,uint16_t forwardingForId, uint16_t owner);
+
+  void TriggerSetPowerFromCodeForTesting();
+  void TriggerRLFDetection();
+  void RLFTakeDecision();
+  void ActIfPowerDown();
+
+
+  //uint8_t DoAddUeMeasReportConfigForMlb (LteRrcSap::ReportConfigEutra reportConfig);
+
   void DoRecvUeData (EpcX2SapUser::UeDataParams params);
+
+
+
 
   // CMAC SAP methods
 
@@ -972,6 +1044,7 @@ public:
    */
   uint32_t GetSrsPeriodicity () const;
 
+
   /**
    * \brief Associate this RRC entity with a particular CSG information.
    * \param csgId the intended Closed Subscriber Group identity
@@ -993,8 +1066,45 @@ public:
    */
   void SetCsgId (uint32_t csgId, bool csgIndication);
 
+  //A.M
+  void UpdateIntraEnbRelation(uint16_t cellId);
+
+
 private:
 
+  /*A.M
+   * In this map we keep track for each of my neighbor how many times they were reported as unresponsive
+   */
+  std::map<uint16_t, uint16_t> m_aliveMap;
+  /*A.M
+   * B , C, as B received Token from Token Owner A and forwarded to C, and C replied with ACK to Token Owner A.
+   * Set when Ack received successfully
+   */
+  struct ackRecv
+  {
+	  uint16_t forwardingId;
+	  uint16_t forwardingForId;
+	  uint16_t ownerId;
+  };
+
+  std::vector<ackRecv>  m_ackRecvMap;
+  //std::map<uint16_t,uint16_t> m_ackRecvMap;
+
+  /*A.M
+   * B , C, as B is down and can't received Token from Token Owner A and  so
+   * will not forwarded to C, and C replied with NACK after timeout to Token Owner A.
+   * Set when NACK received successfully
+   */
+
+  struct nackRecv
+  {
+	  uint16_t forwardingId;
+	  uint16_t forwardingForId;
+	  uint16_t ownerId;
+  };
+  std::vector<nackRecv> m_nackRecvMap;
+
+  //std::map<uint16_t,uint16_t> m_nackRecvMap;
   /** 
    * Allocate a new SRS configuration index for a new UE. 
    *
@@ -1162,6 +1272,18 @@ private:
    * receive from this cell before it is allowed to camp to this cell.
    */
   int8_t m_qRxLevMin;
+
+
+  /**
+   * The 'AdmitResourceStatusRequest' attribute. Whether to admit an X2
+   * resource status request from another eNB
+   */
+ // bool m_admitResourceStatusRequest;
+
+ /** The 'AdmitResourceStatusUpdate' attribute. Whether to admit an X2
+  * resource status update from another eNB
+  */
+ bool m_admitResourceStatusUpdate;
   /**
    * The `AdmitHandoverRequest` attribute. Whether to admit an X2 handover
    * request from another eNB.
@@ -1249,6 +1371,46 @@ private:
    * received. Exporting IMSI, cell ID, and RNTI.
    */
   TracedCallback<uint64_t, uint16_t, uint16_t, LteRrcSap::MeasurementReport> m_recvMeasurementReportTrace;
+
+  //A.M
+  /**
+   * Time limit before an ACK reply timeout_ occurs. Set after a new
+   * FailureDetectionToken is sent. Calling
+   * LteEnbRrc::ACKNotReceivedTimeout() when it expires. Cancelled when TokenACkNACK message is received.
+   */
+  //std::map<uint16_t, EventId> m_ackForFailureTokenTimeoutMap;
+  //std::map<uint16_t, uint16_t> m_ackForToOwnerRelTimeoutMap;
+  //A.M
+  struct AckForFailureTokenTimeout
+  {
+	  uint16_t owner;
+	  uint16_t forwardId;
+	  EventId  noAck;
+  };
+  std::vector<AckForFailureTokenTimeout> m_ackForFailureTokenTimeoutMap;
+
+  Time m_ackForFailureTokenTimeoutDuration;
+  Time m_RLFDecisionDuration;
+
+  //A.M
+  /**
+   * According to the forwarding list X should forward a Token for me, start this timer
+   * and if it expires before I receive a forwarded message from X then call
+   * LteEnbRrc::NoForwardTokenReceivedTimeout() send NACK to Token owner.
+   */
+ // std::map<uint16_t, EventId> m_NoForwardFailureTokenTimeoutMap; // it is map to token owner
+  struct NoForwardFailureTokenTimeout
+  {
+	  uint16_t owner;
+	  uint16_t forwardId;
+	  uint16_t forwaredForId;
+	  EventId  noForward;
+  };
+  std::vector<NoForwardFailureTokenTimeout> m_NoForwardFailureTokenTimeoutMap;
+
+  //A.M
+  // According to the forwarding list X should forward a Token for me, start this timer
+   Time m_NoForwardFailureTokenTimeoutDuration;
 
 }; // end of `class LteEnbRrc`
 

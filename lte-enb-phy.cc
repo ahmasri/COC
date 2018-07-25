@@ -79,6 +79,9 @@ public:
   // inherited from LteEnbPhySapProvider
   virtual void SendMacPdu (Ptr<Packet> p);
   virtual void SetBandwidth (uint8_t ulBandwidth, uint8_t dlBandwidth);
+
+
+
   virtual void SetCellId (uint16_t cellId);
   virtual void SendLteControlMessage (Ptr<LteControlMessage> msg);
   virtual uint8_t GetMacChTtiDelay ();
@@ -104,6 +107,8 @@ EnbMemberLteEnbPhySapProvider::SetBandwidth (uint8_t ulBandwidth, uint8_t dlBand
 {
   m_phy->DoSetBandwidth (ulBandwidth, dlBandwidth);
 }
+
+
 
 void
 EnbMemberLteEnbPhySapProvider::SetCellId (uint16_t cellId)
@@ -147,11 +152,19 @@ LteEnbPhy::LteEnbPhy (Ptr<LteSpectrumPhy> dlPhy, Ptr<LteSpectrumPhy> ulPhy)
     m_currentSrsOffset (0),
     m_interferenceSampleCounter (0)
 {
-  m_enbPhySapProvider = new EnbMemberLteEnbPhySapProvider (this);
+  m_enbPhySapProvider  = new EnbMemberLteEnbPhySapProvider (this);
   m_enbCphySapProvider = new MemberLteEnbCphySapProvider<LteEnbPhy> (this);
-  m_harqPhyModule = Create <LteHarqPhy> ();
+  //m_enbPhySapUser    = new EnbMemberLteEnbPhySapUser (this);
+ // m_enbCphySapUser   = new MemberLteEnbCphySapUser<LteEnbPhy> (this);
+  m_harqPhyModule      = Create <LteHarqPhy> ();
   m_downlinkSpectrumPhy->SetHarqPhyModule (m_harqPhyModule);
   m_uplinkSpectrumPhy->SetHarqPhyModule (m_harqPhyModule);
+
+  //be careful of picking the right time to shutdown the cells
+  // it should be with the same pace with power detection down funcion LteEnbRrc::ActIfPowerDown
+//Simulator::Schedule (MilliSeconds(10350), &LteEnbPhy::SetTxPowerToZero, this);
+Simulator::Schedule (MilliSeconds(25350), &LteEnbPhy::SetTxPowerToZero, this);
+
 }
 
 TypeId
@@ -225,6 +238,12 @@ LteEnbPhy::GetTypeId (void)
                    PointerValue (),
                    MakePointerAccessor (&LteEnbPhy::GetUlSpectrumPhy),
                    MakePointerChecker <LteSpectrumPhy> ())
+
+	.AddAttribute ("EnbCheckMlbPeriod",
+				   "Time period for Checking MLB condition#1",
+				   TimeValue (MilliSeconds (200)),
+				   MakeTimeAccessor (&LteEnbPhy::m_enbCheckMlbPeriod),
+				   MakeTimeChecker ())
   ;
   return tid;
 }
@@ -263,6 +282,8 @@ LteEnbPhy::DoInitialize ()
   if (haveNodeId)
     {
       Simulator::ScheduleWithContext (nodeId, Seconds (0), &LteEnbPhy::StartFrame, this);
+      //Start the MLB check
+    //  Simulator::Schedule (m_enbCheckMlbPeriod, &LteEnbPhy::CheckMlbCondition_1, this);
     }
   else
     {
@@ -273,7 +294,58 @@ LteEnbPhy::DoInitialize ()
   LtePhy::DoInitialize ();
 }
 
+/*std::vector<int> LteEnbPhy::GetlistOfDownlinkSubchannel()
+		{
+	m_listOfDownlinkSubchannel2 = m_listOfDownlinkSubchannel;
+	       return m_listOfDownlinkSubchannel2;
+		}
+uint8_t LteEnbPhy::GetDlBandwidth()
+{
+	m_dlBandwidth2 = m_dlBandwidth;
+	return m_dlBandwidth2;
+}
+*/
 
+void
+LteEnbPhy::CheckMlbCondition_1()
+{
+
+  NS_LOG_FUNCTION (this << Simulator::Now ());
+  NS_LOG_DEBUG (this << " Check MLB condition #1 ");
+
+  m_MlbInfo.cellId = m_cellId;
+  m_MlbInfo.dlBandwidth = m_dlBandwidth;
+  m_MlbInfo.listOfDownlinkSubchannel = GetDownlinkSubChannels();
+
+	//m_listOfDownlinkSubchannel
+  uint16_t PRBCounter = 0;
+  for (int j =0; j< (int)m_MlbInfo.listOfDownlinkSubchannel.size();j++)
+  {
+
+	//  std::cout<< m_MlbInfo.listOfDownlinkSubchannel[j]<<std::endl;
+	  if (m_MlbInfo.listOfDownlinkSubchannel[j])
+	  {
+		  PRBCounter++;
+	  }
+  }
+ std::cout <<Simulator::Now().GetSeconds()<<": In CheckMlbCondition_1(), Cell ="
+		  << m_cellId <<" Number of used PRBs =  "
+		  << PRBCounter
+		  << "Total PRBs resources"<< (uint16_t)m_dlBandwidth
+		  << std::endl;
+
+  if((PRBCounter/m_dlBandwidth) < m_THPre) // always true
+  {
+	  std::cout << Simulator::Now().GetSeconds()
+			  <<": Cell ="<< m_cellId
+			  <<"  Mlb Condition 1  is Triggered"
+			  << std::endl;
+
+	//  m_enbCphySapUser->SapCheckMlbCondition_1 (m_MlbInfo.cellId, m_MlbInfo.dlBandwidth, m_MlbInfo.listOfDownlinkSubchannel);
+  }
+ // m_enbCphySapUser->SapCheckMlbCondition_1 (m_MlbInfo.cellId, m_MlbInfo.dlBandwidth, m_MlbInfo.listOfDownlinkSubchannel);
+ // Simulator::Schedule (m_enbCheckMlbPeriod, &LteEnbPhy::CheckMlbCondition_1, this);
+}
 void
 LteEnbPhy::SetLteEnbPhySapUser (LteEnbPhySapUser* s)
 {
@@ -305,7 +377,119 @@ LteEnbPhy::SetTxPower (double pow)
 {
   NS_LOG_FUNCTION (this << pow);
   m_txPower = pow;
+
+  //A.M.
+  if(Simulator::Now().GetMilliSeconds() == 500)
+  {
+	  if(m_cellId == 5 || m_cellId == 3)
+	  {
+		  m_txPower = -std::numeric_limits<double>::infinity ();
+	  }
+  }
 }
+
+
+//A.M
+void
+LteEnbPhy::SetTxPowerToZero ()
+{
+
+	  //if(m_cellId == 5 || m_cellId == 21 || m_cellId == 15)
+	 //if(m_cellId == 5 || m_cellId == 7 || m_cellId == 1)
+	if(m_cellId == 5 )
+	  {
+		if(m_txPower > 0)
+		{
+
+
+		 // Simulator::Schedule (MilliSeconds(3000), &LteEnbPhy::SetTxPowerToZero, this);
+
+			//Ptr<SpectrumValue> txPsd = CreateTxPowerSpectralDensity ();
+		  //m_downlinkSpectrumPhy->SetTxPowerSpectralDensity (txPsd);
+
+		  //0    1             2        3            4          5        6
+		  //IDLE, TX_DL_CTRL, TX_DATA, TX_UL_SRS, RX_DL_CTRL, RX_DATA, RX_UL_SRS
+		/* if(m_downlinkSpectrumPhy->m_state == 1)
+		  {
+			  m_downlinkSpectrumPhy->EndTxDlCtrl();
+		  }
+		  else if(m_downlinkSpectrumPhy->m_state == 2)
+		  {
+			  m_downlinkSpectrumPhy->EndTxData();
+		  }
+		  else if(m_downlinkSpectrumPhy->m_state == 3)
+		  {
+			  m_downlinkSpectrumPhy->EndTxUlSrs();
+		  }
+		  else if(m_downlinkSpectrumPhy->m_state == 4)
+		  {
+			  m_downlinkSpectrumPhy->EndRxDlCtrl();
+		  }
+		  else if(m_downlinkSpectrumPhy->m_state== 5)
+		  {
+			  m_downlinkSpectrumPhy->EndRxData();
+		  }
+
+		  else if(m_downlinkSpectrumPhy->m_state == 6)
+		  {
+			  m_downlinkSpectrumPhy->EndRxUlSrs();
+		  }
+		  else
+		  {
+			  //IDLE
+			  m_downlinkSpectrumPhy->m_state = m_downlinkSpectrumPhy->State::IDLE;
+		  }
+		 if(m_uplinkSpectrumPhy->m_state == 1)
+		  {
+			  m_uplinkSpectrumPhy->EndTxDlCtrl();
+		  }
+		  else if(m_uplinkSpectrumPhy->m_state == 2)
+		  {
+			  m_uplinkSpectrumPhy->EndTxData();
+		  }
+		  else if(m_uplinkSpectrumPhy->m_state == 3)
+		  {
+			  m_uplinkSpectrumPhy->EndTxUlSrs();
+		  }
+		  else if(m_uplinkSpectrumPhy->m_state == 4)
+		  {
+			  m_uplinkSpectrumPhy->EndRxDlCtrl();
+		  }
+		  else if(m_uplinkSpectrumPhy->m_state== 5)
+		  {
+			  m_uplinkSpectrumPhy->EndRxData();
+		  }
+
+		  else if(m_uplinkSpectrumPhy->m_state == 6)
+		  {
+			  m_uplinkSpectrumPhy->EndRxUlSrs();
+		  }
+		  else
+		  {
+			  //IDLE
+
+		  }
+		 	 m_downlinkSpectrumPhy->m_state = m_downlinkSpectrumPhy->State::IDLE;
+		 	 m_uplinkSpectrumPhy->m_state = m_uplinkSpectrumPhy->State::IDLE;
+
+	//	 std::cout<<Simulator::Now().GetSeconds()<<": In cell Id = "<<m_cellId<<" Txpower = 0"<<" and state = "<<m_downlinkSpectrumPhy->m_state<<std::endl;
+*/
+		 m_txPower =  -std::numeric_limits<double>::infinity ();
+		}
+		else
+		{
+			  m_txPower = 43.0;
+			  std::cout<<Simulator::Now().GetSeconds()<<": In cell Id = "<<m_cellId<<" Txpower =43 dBm"<<std::endl;
+			  //LteHelper::DisableEnablePhyTraces();
+
+
+
+		}
+	  }
+
+
+}
+
 
 double
 LteEnbPhy::GetTxPower () const
@@ -320,6 +504,14 @@ LteEnbPhy::DoGetReferenceSignalPower () const
   NS_LOG_FUNCTION (this);
   return m_txPower;
 }
+
+//A.M
+/*double
+LteEnbPhy::DoGetMyTxPower () const
+{
+	NS_LOG_FUNCTION (this);
+	return m_txPower;
+}*/
 
 void
 LteEnbPhy::SetNoiseFigure (double nf)
@@ -438,6 +630,7 @@ LteEnbPhy::SetDownlinkSubChannels (std::vector<int> mask)
 {
   NS_LOG_FUNCTION (this);
   m_listOfDownlinkSubchannel = mask;
+ // Simulator::Schedule (m_enbCheckMlbPeriod, &LteEnbPhy::CheckMlbCondition_1, this);
   Ptr<SpectrumValue> txPsd = CreateTxPowerSpectralDensity ();
   m_downlinkSpectrumPhy->SetTxPowerSpectralDensity (txPsd);
 }
@@ -905,6 +1098,13 @@ LteEnbPhy::DoSetBandwidth (uint8_t ulBandwidth, uint8_t dlBandwidth)
           break;
         }
     }
+}
+
+//A.M
+void
+LteEnbPhy::DoSetTxPower(double txPow)
+{
+	m_txPower = txPow;
 }
 
 void 
