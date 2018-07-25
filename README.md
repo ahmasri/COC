@@ -1,2 +1,2 @@
-# COC
-cell outage compensation - NS3
+# Ns-3 Code
+CSON project
