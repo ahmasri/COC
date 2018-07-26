@@ -93,6 +93,8 @@ MacStatsCalculator::DlScheduling (uint16_t cellId, uint64_t imsi, uint32_t frame
 {
   NS_LOG_FUNCTION (this << cellId << imsi << frameNo << subframeNo << rnti << (uint32_t) mcsTb1 << sizeTb1 << (uint32_t) mcsTb2 << sizeTb2);
   NS_LOG_INFO ("Write DL Mac Stats in " << GetDlOutputFilename ().c_str ());
+  //A.M
+ // std::cout<<"*********************Number of PRBs"<<LteAmc::GetRbFromTb(sizeTb1, mcsTb1)<<std::endl;
 
   std::ofstream outFile;
   if ( m_dlFirstWrite == true )
@@ -104,7 +106,7 @@ MacStatsCalculator::DlScheduling (uint16_t cellId, uint64_t imsi, uint32_t frame
           return;
         }
       m_dlFirstWrite = false;
-      outFile << "% time\tcellId\tIMSI\tframe\tsframe\tRNTI\tmcsTb1\tsizeTb1\tmcsTb2\tsizeTb2";
+      //outFile << "% time\tcellId\tIMSI\tframe\tsframe\tRNTI\tNumPRBs\tmcsTb1\tsizeTb1\tmcsTb2\tsizeTb2";
       outFile << std::endl;
     }
   else
@@ -117,15 +119,16 @@ MacStatsCalculator::DlScheduling (uint16_t cellId, uint64_t imsi, uint32_t frame
         }
     }
 
-  outFile << Simulator::Now ().GetNanoSeconds () / (double) 1e9 << "\t";
-  outFile << (uint32_t) cellId << "\t";
-  outFile << imsi << "\t";
-  outFile << frameNo << "\t";
-  outFile << subframeNo << "\t";
-  outFile << rnti << "\t";
-  outFile << (uint32_t) mcsTb1 << "\t";
-  outFile << sizeTb1 << "\t";
-  outFile << (uint32_t) mcsTb2 << "\t";
+  outFile << Simulator::Now ().GetNanoSeconds () / (double) 1e9 << ",\t";
+  outFile << (uint32_t) cellId << ",\t";
+  outFile << imsi << ",\t";
+  outFile << frameNo << ",\t";
+  outFile << subframeNo << ",\t";
+  outFile << rnti << ",\t";
+  outFile << LteAmc::GetRbFromTb(sizeTb1, mcsTb1) << ",\t";
+  outFile << (uint32_t) mcsTb1 << ",\t";
+  outFile << sizeTb1 << ",\t";
+  outFile << (uint32_t) mcsTb2 << ",\t";
   outFile << sizeTb2 << std::endl;
   outFile.close ();
 }
@@ -160,13 +163,13 @@ MacStatsCalculator::UlScheduling (uint16_t cellId, uint64_t imsi, uint32_t frame
         }
     }
 
-  outFile << Simulator::Now ().GetNanoSeconds () / (double) 1e9 << "\t";
-  outFile << (uint32_t) cellId << "\t";
-  outFile << imsi << "\t";
-  outFile << frameNo << "\t";
-  outFile << subframeNo << "\t";
-  outFile << rnti << "\t";
-  outFile << (uint32_t) mcsTb << "\t";
+  outFile << Simulator::Now ().GetNanoSeconds () / (double) 1e9 << ",\t";
+  outFile << (uint32_t) cellId << ",\t";
+  outFile << imsi << ",\t";
+  outFile << frameNo << ",\t";
+  outFile << subframeNo << ",\t";
+  outFile << rnti << ",\t";
+  outFile << (uint32_t) mcsTb << ",\t";
   outFile << size << std::endl;
   outFile.close ();
 }

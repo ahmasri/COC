@@ -1408,7 +1408,7 @@ LteEnbRrc::LteEnbRrc ()
 
 
      //Simulator::Schedule (MilliSeconds(10355), &LteEnbRrc::TriggerRLFDetection, this);
-    Simulator::Schedule (MilliSeconds(25355), &LteEnbRrc::TriggerRLFDetection, this);
+      Simulator::Schedule (MilliSeconds(200355), &LteEnbRrc::TriggerRLFDetection, this);
 
   	 Simulator::Schedule (MilliSeconds(20), &LteEnbRrc::ActIfPowerDown, this);
 
@@ -1814,7 +1814,7 @@ void LteEnbRrc::ActIfPowerDown()
 
 		m_RLFRemoveUeSched = true;
 		std::cout<<"In ActIfPowerDown and the RLFRemoveUe is scheduled for cell "<<m_cellId<<std::endl;
-		Simulator::Schedule (MilliSeconds(1000), &LteEnbRrc::RLFRemoveUe, this);
+		Simulator::Schedule (MilliSeconds(2000), &LteEnbRrc::RLFRemoveUe, this);
 
 
 		//std::cout<<Simulator::Now().GetSeconds()<<": In cell ("<< m_cellId <<") Removed all UEs = "<<m_numberUePerEnb<<std::endl;
